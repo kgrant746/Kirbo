@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-__version__ = "1.0.0"
+__version__ = "1.1.1"
 
 TOKEN = os.getenv("KIRBO_TOKEN")        
 GUILD_ID = int(os.getenv("GUILD_ID", 0))    
