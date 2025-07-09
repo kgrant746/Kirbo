@@ -31,10 +31,10 @@ async def _search_ytdlp(query: str) -> dict:
 
 def setup_music(bot: commands.Bot | discord.Bot) -> None:
     tree = bot.tree
-    guild_ids = [config.GUILD_ID]
+    guilds = [discord.Object(id=config.GUILD_ID)]
 
     #-------------------------- /play --------------------------
-    @bot.tree.command(name="play", description="Play a song or add it to the queue.")
+    @bot.tree.command(name="play", description="Play a song or add it to the queue.", guilds=guilds)
     @app_commands.describe(song_query="Search query")
     async def play(interaction: discord.Interaction, song_query: str):
 
@@ -90,7 +90,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
             await play_next_song(voice_client, guild_id, interaction.channel, post_now_playing=False)
 
     #-------------------------- /skip --------------------------
-    @bot.tree.command(name="skip", description="Skips the current playing song")
+    @bot.tree.command(name="skip", description="Skips the current playing song", guilds=guilds)
     async def skip(interaction: discord.Interaction):
         if interaction.guild.voice_client and (interaction.guild.voice_client.is_playing() or interaction.guild.voice_client.is_paused()):
             interaction.guild.voice_client.stop()
@@ -99,7 +99,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
             await interaction.response.send_message("Not playing anything to skip.")
 
     #-------------------------- /pause --------------------------
-    @bot.tree.command(name="pause", description="Pause the currently playing song.")
+    @bot.tree.command(name="pause", description="Pause the currently playing song.", guilds=guilds)
     async def pause(interaction: discord.Interaction):
         voice_client = interaction.guild.voice_client
         
@@ -113,7 +113,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         await interaction.response.send_message("Playback paused.")
 
     #-------------------------- /resume --------------------------
-    @bot.tree.command(name="resume", description="Resume the currently paused song.")
+    @bot.tree.command(name="resume", description="Resume the currently paused song.", guilds=guilds)
     async def resume(interaction: discord.Interaction):
         voice_client = interaction.guild.voice_client
         
@@ -127,7 +127,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         await interaction.response.send_message("Playback resumed.")
 
     #-------------------------- /stop --------------------------
-    @bot.tree.command(name="stop", description="Stop playback and clear the queue.")
+    @bot.tree.command(name="stop", description="Stop playback and clear the queue.", guilds=guilds)
     async def stop(interaction: discord.Interaction):
         await interaction.response.defer()
         voice_client = interaction.guild.voice_client
