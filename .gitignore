@@ -1,4 +1,5 @@
 .env
+venv
 private.py
 start_bot.bat
 
