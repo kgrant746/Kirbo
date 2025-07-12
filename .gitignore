@@ -3,3 +3,4 @@ venv
 start_bot.bat
 private.py
 __pycache__
+**/__pycache__/
