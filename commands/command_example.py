@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 
 def setup(bot: commands.Bot | discord.Bot) -> None:
-    @bot.tree.command(name="hello", description="Say hello", guilds=[discord.Object(id=config.GUILD_ID)])
-    async def hello(interaction: discord.Interaction):
+    @bot.tree.command(name="ucha", description="Gathers the Uchas", guilds=[discord.Object(id=config.GUILD_ID)])
+    async def ucha(interaction: discord.Interaction):
         
-        await interaction.response.send_message("Hello, world!")
+        await interaction.response.send_message(":Ucha::AntiUcha::ChiefUcha")
