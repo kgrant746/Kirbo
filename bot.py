@@ -1,4 +1,4 @@
-import discord, config, music
+import discord, config, music, llm
 from discord.ext import commands
 import command_handler
 
@@ -9,6 +9,8 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 command_handler.setup_all(bot)
 music.setup_music(bot)
+
+llm.setup_llm(bot)
 
 @bot.event
 async def on_ready():

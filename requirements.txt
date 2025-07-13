@@ -1,4 +1,6 @@
-discord.py>=2.5.2
+git+https://github.com/Rapptz/discord.py@master#egg=discord.py[voice]
 PyNaCl>=1.5.0
 python-dotenv>=1.1.0
 yt-dlp>=2025.3.31
+torch>=2.7.1
+transformers>=4.53.2
