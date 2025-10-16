@@ -269,8 +269,3 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
 
             if post_now_playing:
                 asyncio.create_task(channel.send(f"Now playing: **{title}**"))
-
-        else:
-            await asyncio.sleep(config.DISCONNECT_TIMEOUT)
-            await voice_client.disconnect()
-            SONG_QUEUES[guild_id].clear()
