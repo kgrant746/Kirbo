@@ -9,7 +9,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-CHANNEL_ID = 933797868618256397  # voice channel ID
+CHANNEL_ID = 1428195301188960286  # voice channel ID
 TARGET_DATE = date(2025, 11, 15)  # set the CoD release date (YYYY, M, D)
 
 command_handler.setup_all(bot)
