@@ -1,12 +1,13 @@
 from __future__ import annotations
-import commands.command_example
 import discord, config
 from discord import app_commands
 from discord.ext import commands
 
-import commands.purge
+import commands
 
 
 def setup_all(bot: commands.Bot | discord.Bot) -> None:
-    commands.purge.setup(bot)
     commands.command_example.setup(bot)
+    commands.purge.setup(bot)
+    commands.cringe.setup(bot)
+    
