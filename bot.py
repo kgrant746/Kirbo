@@ -15,7 +15,7 @@ LOCAL_TZ = datetime.now().astimezone().tzinfo
 command_handler.setup_all(bot)
 music.setup_music(bot)
 
-
+#------------------ COD Countdown Channel Name Updater ------------------#
 def make_name(days: int) -> str:
     if days <= 0:
         return "CoD is out"
@@ -42,5 +42,6 @@ async def on_ready():
     await set_channel_name()
     if not nightly_update.is_running():
         nightly_update.start()
+#-----------------------------------------------------------------------#
 
 bot.run(config.TOKEN)
