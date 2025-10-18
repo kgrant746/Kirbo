@@ -8,4 +8,4 @@ bin
 .vscode
 .cache
 references.py
-economy_data.json
+data
