@@ -1,5 +1,6 @@
 from discord.ext import commands, tasks
 from datetime import datetime, date, time
+import config
 
 bot: commands.Bot | None = None
 LOCAL_TZ = datetime.now().astimezone().tzinfo
@@ -25,7 +26,7 @@ async def run_holiday_check():
 
     print(f"Today is {today}")
     if (today.month, today.day) in TRIGGER_DATES:
-        channel = await bot.fetch_channel(530799669597700147) # currently BOT TEST channel
+        channel = await bot.fetch_channel(config.GENERAL_CHAT_CHANNEL_ID) # currently BOT TEST channel
         print("Trigger date matched!")
 
         if today.month == 11:
@@ -43,7 +44,7 @@ async def holiday_time(image_path: str):
 
 
 #------------------ COD Countdown Channel Name Updater ------------------#
-CHANNEL_ID = 1428195301188960286  # voice channel ID
+CHANNEL_ID = config.COD_VOICE_CHANNEL_ID  # voice channel ID
 TARGET_DATE = date(2025, 11, 14)  # set the CoD release date (YYYY, M, D)
 
 def make_name(days: int) -> str:
