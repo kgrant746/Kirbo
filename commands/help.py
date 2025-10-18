@@ -114,6 +114,80 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
             inline=False
         )
 
+        embed.add_field(
+            name="**🃏 /blackjack [bet_amount]**",
+            value=(
+                "**Description:**\n"
+                " • Starts a new game of blackjack.\n"
+                "**Parameters:**\n"
+                " • `bet_amount` — Amount of money you want to bet. There is no max bet.\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="**🃏 /hit**",
+            value=(
+                "**Description:**\n"
+                " • Draws another card in your current blackjack hand.\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="**🃏 /stand**",
+            value=(
+                "**Description:**\n"
+                " • Ends your turn and lets the dealer play.\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="**🃏 /double**",
+            value=(
+                "**Description:**\n"
+                " • Doubles your bet and draws one final card before standing.\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="**🃏 /surrender**",
+            value=(
+                "**Description:**\n"
+                " • Ends your current hand early and returns half your bet.\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="**🃏 /balance**",
+            value=(
+                "**Description:**\n"
+                " • Shows how much money you currently have.\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="**🃏 /leaderboard**",
+            value=(
+                "**Description:**\n"
+                " • Displays the richest players on the server.\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="**🃏 /charity**",
+            value=(
+                "**Description:**\n"
+                " • Once per day, receive a random amount of money (0–1000) from the charity pool.\n"
+            ),
+            inline=False
+        )
+
         embed.set_footer(text="Sucka mah dih")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
