@@ -4,7 +4,7 @@ start_bot.bat
 private.py
 __pycache__
 **/__pycache__/
-bin/ffmpeg
+bin
 .vscode
 .cache
 references.py
