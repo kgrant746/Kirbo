@@ -11,4 +11,5 @@ def setup_all(bot: commands.Bot | discord.Bot) -> None:
     commands.purge.setup(bot)
     commands.cringe.setup(bot)
     commands.timeout.setup(bot)
+    commands.help.setup(bot)
     
