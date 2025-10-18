@@ -7,6 +7,8 @@ from discord.ext import commands
 def setup(bot: commands.Bot | discord.Bot) -> None:
     @bot.tree.command(name="help", description="Shows a list of all commands and what they do.", guilds=[discord.Object(id=config.GUILD_ID)])
     async def help(interaction: discord.Interaction):
+        print(f"{interaction.user} used /help")
+        
         embed = discord.Embed(
             title="📘 Kirbo Command Guide",
             description="YURRRRRRRRRRRR",
