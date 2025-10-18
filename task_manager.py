@@ -8,7 +8,7 @@ LOCAL_TZ = datetime.now().astimezone().tzinfo
 #------------------ Holiday Profile Picture Changer ------------------#
 
 TRIGGER_DATES = [
-    (10, 17), 
+    (10, 1), 
     (11, 1), 
     (1, 1)
 ]
