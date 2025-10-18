@@ -189,7 +189,8 @@ def _format_hand(cards: List[str], hide_first: bool = False) -> str:
         return " ".join(cards)
     if not cards:
         return ""
-    return "🂠 " + " ".join(cards[1:])
+    visible = " ".join(cards[1:])  # show the upcard(s)
+    return f"{visible} ??" if visible else "??"
 
 def _options_text(state: Optional[BJState], resolved: bool) -> str:
     if resolved or not state or not state.active:
@@ -197,24 +198,33 @@ def _options_text(state: Optional[BJState], resolved: bool) -> str:
     parts = ["Next: `/hit`, `/stand`"]
     if not state.doubled and len(state.player) == 2:
         parts.append("`/double`")
-        parts.append("`/surrender`")
+        parts.append("`/fold`") 
     parts.append("`/balance`")
     return " ".join(parts)
 
 def _out_embed(user: discord.User, state: BJState, reveal: bool = False, footer: str | None = None, resolved: bool = False) -> discord.Embed:
     pv, psoft = _hand_value(state.player)
-    dv_shown = state.dealer if reveal else state.dealer[1:]
-    dv, dsoft = _hand_value(dv_shown) if dv_shown else (0, False)
+
     e = discord.Embed(title=f"Blackjack — {user.display_name}", color=discord.Color.dark_green())
-    e.add_field(name="Your Hand", value=f"{_format_hand(state.player)}  (**{pv}**{' soft' if psoft else ''})", inline=False)
+    # Player line always shows value
     e.add_field(
-        name="Dealer",
-        value=f"{_format_hand(state.dealer, hide_first=not reveal)}  (**{dv if reveal else '??'}**)",
-        inline=False,
+        name="Your Hand",
+        value=f"{_format_hand(state.player)}  (**{pv}**{' soft' if psoft else ''})",
+        inline=False
     )
+
+    if reveal:
+        dv, dsoft = _hand_value(state.dealer)
+        dealer_line = f"{_format_hand(state.dealer, hide_first=False)}  (**{dv}**{' soft' if dsoft else ''})"
+    else:
+        # Hide dealer total entirely until reveal — no (??)
+        dealer_line = _format_hand(state.dealer, hide_first=True)
+
+    e.add_field(name="Dealer", value=dealer_line, inline=False)
     e.add_field(name="Bet", value=f"${state.bet}", inline=True)
     e.set_footer(text=footer or _options_text(state, resolved))
     return e
+
 
 # ----------------------------- slash commands -----------------------------
 def setup(bot: commands.Bot | discord.Bot) -> None:
@@ -328,16 +338,17 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
         state.player.append(state.deck.pop())
         await _dealer_maybe_and_resolve(interaction, state)
 
-    @bot.tree.command(name="surrender", description="Surrender your hand (get half your bet back)", guilds=guilds)
-    async def surrender(interaction: discord.Interaction):
+    @bot.tree.command(name="fold", description="Fold your hand (get half your bet back)", guilds=guilds)
+    async def fold(interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         state = await _load_state(interaction.user.id)
         if not _validate_state(interaction, state):
             return
         if len(state.player) != 2:
-            return await interaction.followup.send("You can only surrender on your first action.")
-        state.surrendered = True
+            return await interaction.followup.send("You can only fold on your first action.")
+        state.surrendered = True  # reuse the same flag
         await _resolve_and_payout(interaction, state)
+
 
 # ----------------------------- helpers -----------------------------
 def _validate_state(inter: discord.Interaction, state: Optional[BJState]) -> bool:
@@ -376,9 +387,10 @@ async def _resolve_and_payout(interaction: discord.Interaction, state: BJState, 
     payout = 0
 
     if state.surrendered:
-        result = f"You surrendered. Returned **${state.bet // 2}**."
+        result = f"You folded. Returned **${state.bet // 2}**."
         payout = state.bet // 2
         await _bump_stats(user_id, loss=1)
+
     else:
         if natural:
             player_bj = _is_blackjack(state.player)

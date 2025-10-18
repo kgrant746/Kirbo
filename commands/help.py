@@ -153,7 +153,7 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
         )
 
         embed.add_field(
-            name="**🃏 /surrender**",
+            name="**🃏 /fold**",
             value=(
                 "**Description:**\n"
                 " • Ends your current hand early and returns half your bet.\n"
