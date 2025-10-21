@@ -258,6 +258,16 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
         await _set_last_charity_ymd(interaction.user.id, today)
         await interaction.response.send_message(f"🎁 Charity granted **${amount}**. New balance: **${bal + amount}**", ephemeral=True)
 
+    @bot.tree.command(name="broke", description="Only usable entirely broke ($0). Gives a random amount of money ($1-$10)", guilds=guilds)
+    async def broke(interaction: discord.Interaction):
+        bal = await _get_balance(interaction.user.id)
+        if bal != 0:
+            return await interaction.response.send_message("You ain't broke!", ephemeral=True)
+        amount = random.randint(1, 10)
+        
+        await _set_balance(interaction.user.id, bal + amount)
+        await interaction.response.send_message(f"Pity money granted. New balance: **${bal + amount}**", ephemeral=True)
+
     @bot.tree.command(name="blackjack", description="Start or resume a blackjack hand", guilds=guilds)
     @app_commands.describe(bet="Your wager in dollars (ignored if resuming an active hand)")
     async def blackjack(interaction: discord.Interaction, bet: Optional[int] = None):

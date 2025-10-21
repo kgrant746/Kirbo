@@ -188,6 +188,15 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
             inline=False
         )
 
+        embed.add_field(
+            name="**🃏 /broke**",
+            value=(
+                "**Description:**\n"
+                " • Usable only when at $0. Gives a random amount of money (1-10) so you can keep feeding the gambling addiction.\n"
+            ),
+            inline=False
+        )
+
         embed.set_footer(text="Sucka mah dih")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
