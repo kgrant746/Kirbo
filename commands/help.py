@@ -162,6 +162,15 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
         )
 
         embed.add_field(
+            name="**🃏 /split**",
+            value=(
+                "**Description:**\n"
+                " • Split your initial pair into two hands.\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
             name="**🃏 /balance**",
             value=(
                 "**Description:**\n"
