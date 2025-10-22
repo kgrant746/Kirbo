@@ -89,6 +89,18 @@ async def _set_last_charity_ymd(user_id: int, ymd: str):
     row["last_charity_ymd"] = ymd
     await _save_json(ECON_FILE, eco)
 
+def _parse_bet(bet_raw: Optional[str], balance: int) -> Optional[int]:
+    if bet_raw is None:
+        return None
+    s = str(bet_raw).strip().lower()
+    if s in ("all", "max"):
+        return balance
+    try:
+        v = int(s)
+        return v if v > 0 else None
+    except ValueError:
+        return None
+
 # ----------------------------- blackjack engine -----------------------------
 SUITS = ["♠", "♥", "♦", "♣"]
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -465,26 +477,32 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
         await interaction.response.send_message(f"Pity money granted. New balance: **${bal + amount}**", ephemeral=True)
 
     @bot.tree.command(name="blackjack", description="Start or resume a blackjack hand", guilds=guilds)
-    @app_commands.describe(bet="Your wager in dollars (ignored if resuming an active hand)")
-    async def blackjack(interaction: discord.Interaction, bet: Optional[int] = None):
+    @app_commands.describe(bet="Your wager (e.g., 250 or 'all'). Ignored if resuming an active hand.")
+    async def blackjack(interaction: discord.Interaction, bet: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
 
+        # Resume if there’s an active hand
         existing = await _load_state(interaction.user.id)
         if existing and existing.active:
             bal = await _get_balance(interaction.user.id)
             footer = _options_text(existing, resolved=False, balance=bal)
-            return await interaction.followup.send(embed=_out_embed(interaction.user, existing, reveal=False, footer=footer, resolved=False))
-
-        if bet is None or bet <= 0:
-            return await interaction.followup.send("Provide a positive bet to start a new hand, or resume your active one.")
+            return await interaction.followup.send(
+                embed=_out_embed(interaction.user, existing, reveal=False, footer=footer, resolved=False)
+            )
 
         bal = await _get_balance(interaction.user.id)
-        if bet > bal:
+
+        # Parse bet (supports "all"/"max" or a number)
+        bet_val = _parse_bet(bet, bal)
+        if bet_val is None:
+            return await interaction.followup.send("Provide a valid bet (e.g., `250` or `all`).")
+        if bet_val > bal:
             return await interaction.followup.send(f"Insufficient balance. You have **${bal}**.")
 
-        await _set_balance(interaction.user.id, bal - bet)
+        # Take bet
+        await _set_balance(interaction.user.id, bal - bet_val)
 
-        state = BJState(user_id=interaction.user.id, bet=bet, deck=_new_deck())
+        state = BJState(user_id=interaction.user.id, bet=bet_val, deck=_new_deck())
         # initial deal
         state.player.append(state.deck.pop())
         state.dealer.append(state.deck.pop())

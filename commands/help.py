@@ -120,7 +120,7 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
                 "**Description:**\n"
                 " • Starts a new game of blackjack.\n"
                 "**Parameters:**\n"
-                " • `bet_amount` — Amount of money you want to bet. There is no max bet.\n"
+                " • `bet_amount` — Your wager (e.g., 250 or 'all'). Ignored if resuming an active hand.\n"
             ),
             inline=False
         )
