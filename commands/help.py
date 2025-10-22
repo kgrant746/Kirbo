@@ -192,7 +192,7 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
             name="**🃏 /broke**",
             value=(
                 "**Description:**\n"
-                " • Usable only when at $0. Gives a random amount of money (1-10) so you can keep feeding the gambling addiction.\n"
+                " • Usable only when at $0. Gives a random amount of money (1-50) so you can keep feeding the gambling addiction.\n"
             ),
             inline=False
         )

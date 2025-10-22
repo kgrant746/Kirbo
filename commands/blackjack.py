@@ -239,10 +239,10 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
     async def leaderboard(interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         eco = await _load_json(ECON_FILE)
-        rows = sorted(((int(uid), d.get("balance", 0)) for uid, d in eco.items()), key=lambda x: x[1], reverse=True)[:10]
+        rows = sorted(((int(uid), d.get("balance", 0), d.get("hands", 0)) for uid, d in eco.items()), key=lambda x: x[1], reverse=True)[:10]
         lines = []
-        for i, (uid, bal) in enumerate(rows, 1):
-            lines.append(f"{i}. <@{uid}> — **${bal}**")
+        for i, (uid, bal, hands) in enumerate(rows, 1):
+            lines.append(f"{i}. <@{uid}> — **${bal}** — Total Hands: **{hands}**")
         await interaction.followup.send("\n".join(lines) if lines else "No data yet.")
 
     @bot.tree.command(name="charity", description="Claim a daily random grant (0–1000). Once per day.", guilds=guilds)
@@ -258,12 +258,12 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
         await _set_last_charity_ymd(interaction.user.id, today)
         await interaction.response.send_message(f"🎁 Charity granted **${amount}**. New balance: **${bal + amount}**", ephemeral=True)
 
-    @bot.tree.command(name="broke", description="Only usable entirely broke ($0). Gives a random amount of money ($1-$10)", guilds=guilds)
+    @bot.tree.command(name="broke", description="Only usable entirely broke ($0). Gives a random amount of money ($1-$50)", guilds=guilds)
     async def broke(interaction: discord.Interaction):
         bal = await _get_balance(interaction.user.id)
         if bal != 0:
             return await interaction.response.send_message("You ain't broke!", ephemeral=True)
-        amount = random.randint(1, 10)
+        amount = random.randint(1, 50)
         
         await _set_balance(interaction.user.id, bal + amount)
         await interaction.response.send_message(f"Pity money granted. New balance: **${bal + amount}**", ephemeral=True)
