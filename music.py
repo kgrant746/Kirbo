@@ -51,7 +51,6 @@ async def _search_ytdlp(query: str) -> dict:
     raise last_err if last_err else RuntimeError("yt-dlp failed with unknown error")
 
 
-
 def setup_music(bot: commands.Bot | discord.Bot) -> None:
     spotify = spotipy.Spotify(auth_manager=spotipy.SpotifyClientCredentials(
         client_id=config.SPOTIFY_CLIENT_ID,
@@ -175,6 +174,45 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
 
         await voice_client.disconnect()
 
+    @bot.tree.command(name="queue", description="Lists out the songs currently queued to play.", guilds=guilds)
+    async def queue(interaction: discord.Interaction):
+        guild_id = str(interaction.guild_id)
+        queue = SONG_QUEUES.get(guild_id)
+
+        if not queue or len(queue) == 0:
+            await interaction.response.send_message("The song queue is currently empty.")
+            return
+
+        message_lines = []
+        for idx, (_, title) in enumerate(queue):
+            message_lines.append(f"{idx + 1}. {title}")
+
+        message = "\n".join(message_lines)
+        if len(message) > 2000:
+            with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".txt") as temp_file:
+                temp_file.write(message)
+                temp_file_path = temp_file.name
+            await interaction.response.send_message("The queue is too long to display here. See the attached file.", file=discord.File(temp_file_path))
+        else:
+            await interaction.response.send_message(f"Current Song Queue:\n{message}") 
+
+    @bot.tree.command(name="nowplaying", description="Gets the currently playing song.", guilds=guilds)
+    async def nowplaying(interaction: discord.Interaction):
+        voice_client = interaction.guild.voice_client
+
+        if voice_client is None or not (voice_client.is_playing() or voice_client.is_paused()):
+            await interaction.response.send_message("No song is currently playing.")
+            return
+
+        guild_id = str(interaction.guild_id)
+        queue = SONG_QUEUES.get(guild_id)
+
+        if queue and len(queue) > 0:
+            current_song = queue[0][1]
+            await interaction.response.send_message(f"Currently playing: **{current_song}**")
+        else:
+            await interaction.response.send_message("Currently playing a song, but the title is unknown.")
+
     @bot.tree.command(name="playlist", description="Queue the songs from a *PUBLIC* Spotify playlist (doesn't work if playlist is private).", guilds=guilds)
     @app_commands.describe(spotify_url="Link to a Spotify playlist", shuffle="Whether to randomize track order")
     async def playlist(interaction: discord.Interaction, spotify_url: str, shuffle: bool = False):
@@ -229,17 +267,19 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
             await play_next_song(voice_client, guild_id, interaction.channel, post_now_playing=False)
         else:
             await interaction.followup.send(f"Added **{first_entry.get('title', first_name)}** to the queue.")
+        print(f"Qeueued: {first_artists} – {first_name}")
 
         async def enqueue_rest():
             count = 1
             for name, artists in items:
-                q = f"ytsearch1:{name} – {artists}"
+                q = f"ytsearch1:{artists} – {name}"
                 try:
                     info = await _search_ytdlp(q)
                     entry = info["entries"][0] if "entries" in info else info
                 except Exception:
                     continue
                 SONG_QUEUES[guild_id].append((entry["url"], entry.get("title", name)))
+                print(f"Qeueued: {artists} – {name}")
                 count += 1
             await interaction.channel.send(f"Queued **{count}** tracks.")
 

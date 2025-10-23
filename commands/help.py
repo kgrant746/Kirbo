@@ -63,6 +63,24 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
         )
 
         embed.add_field(
+            name="**🎵 /queue**",
+            value=(
+                "**Description:**\n" 
+                " • Lists out the songs currently queued to play.\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="**🎵 /nowplaying**",
+            value=(
+                "**Description:**\n" 
+                " • Gets the currently playing song.\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
             name="**🎵 /playlist [playlist_url] [shuffle]**",
             value=(
                 "**Description:**\n"
