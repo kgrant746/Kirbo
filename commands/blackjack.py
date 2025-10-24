@@ -472,9 +472,10 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
         bal = await _get_balance(interaction.user.id)
         if bal != 0:
             return await interaction.response.send_message("You ain't broke!", ephemeral=True)
-        if random.randint(1,1000) == 69:
+        chance = random.randint(1,1000)
+        if  chance == 69:
             await _set_balance(interaction.user.id, bal + 1000)
-            await interaction.response.send_message(f"It's you're lucky day, here's $1000 on the house. Don't blow it all right away.", ephemeral=True)
+            await interaction.response.send_message(f"It's you're lucky day, here's $1000 on the house. Don't blow it all in one bet.", ephemeral=True)
             return
         amount = random.randint(1, 50)
         await _set_balance(interaction.user.id, bal + amount)
