@@ -461,8 +461,10 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
         last = await _get_last_charity_ymd(interaction.user.id)
         if last == today:
             return await interaction.response.send_message("You already claimed today. Try again tomorrow.", ephemeral=True)
-        amount = random.randint(0, 1000)
         bal = await _get_balance(interaction.user.id)
+        if bal >= 2000:
+            return await interaction.response.send_message("You've got plenty of money, you don't need charity!", ephemeral=True)
+        amount = random.randint(0, 1000)
         await _set_balance(interaction.user.id, bal + amount)
         await _set_last_charity_ymd(interaction.user.id, today)
         await interaction.response.send_message(f"🎁 Charity granted **${amount}**. New balance: **${bal + amount}**", ephemeral=True)
