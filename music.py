@@ -14,6 +14,11 @@ import tempfile
 import config
 import private
 
+from pathlib import Path
+
+PLAYLISTS_DIR = Path(getattr(config, "PLAYLISTS_DIR", Path(__file__).parent / "playlists"))
+PLAYLISTS_DIR.mkdir(parents=True, exist_ok=True)
+
 
 SONG_QUEUES: Dict[str, Deque[Tuple[str, str]]] = {}
 
@@ -49,6 +54,23 @@ async def _search_ytdlp(query: str) -> dict:
             raise
     # If all clients failed, raise the last error so callers can message the user.
     raise last_err if last_err else RuntimeError("yt-dlp failed with unknown error")
+
+
+def _is_spotify_playlist(s: str) -> bool:
+    s = s.strip().lower()
+    return (s.startswith("http://") or s.startswith("https://")) and "open.spotify.com/playlist" in s
+
+def _load_text_playlist(filename: str) -> list[str]:
+    name = filename.strip()
+    if not name.lower().endswith(".txt"):
+        name += ".txt"
+    p = (PLAYLISTS_DIR / name).resolve()
+    # prevent path traversal
+    if PLAYLISTS_DIR.resolve() not in p.parents:
+        raise ValueError("Invalid filename.")
+    with p.open("r", encoding="utf-8") as f:
+        lines = [ln.strip() for ln in f if ln.strip() and not ln.lstrip().startswith("#")]
+    return lines
 
 
 def setup_music(bot: commands.Bot | discord.Bot) -> None:
@@ -213,37 +235,24 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         else:
             await interaction.response.send_message("Currently playing a song, but the title is unknown.")
 
-    @bot.tree.command(name="playlist", description="Queue the songs from a *PUBLIC* Spotify playlist (doesn't work if playlist is private).", guilds=guilds)
-    @app_commands.describe(spotify_url="Link to a Spotify playlist", shuffle="Whether to randomize track order")
-    async def playlist(interaction: discord.Interaction, spotify_url: str, shuffle: bool = False):
+    @bot.tree.command(
+        name="playlist",
+        description="Queue a Spotify playlist URL or a saved .txt file of queries.",
+        guilds=guilds
+    )
+    @app_commands.describe(
+        source="Spotify playlist URL or a saved text filename in the playlists folder",
+        shuffle="Whether to randomize track order"
+    )
+    async def playlist(interaction: discord.Interaction, source: str, shuffle: bool = False):
         await interaction.response.defer()
-        try:
-            raw_id = spotify_url.rstrip("/").split("/")[-1]
-            playlist_id = raw_id.split("?")[0]
-        except Exception:
-            return await interaction.followup.send("Couldn't parse a playlist ID from that URL.", ephemeral=True)
 
-        items = []
-        results = spotify.playlist_items(
-            playlist_id,
-            fields="items.track(name,artists(name)),next",
-            additional_types=["track"]
-        )
-        for it in results["items"]:
-            t = it["track"]
-            if t and t.get("name"):
-                artists = ", ".join(a["name"] for a in t["artists"])
-                items.append((t["name"], artists))
-
-        if not items:
-            return await interaction.followup.send("No tracks found in that playlist.", ephemeral=True)
-
-        if shuffle:
-            random.shuffle(items)
-
-        voice_channel = interaction.user.voice.channel
-        if not voice_channel:
+        # Voice checks
+        vc_state = getattr(interaction.user, "voice", None)
+        if not vc_state or not vc_state.channel:
             return await interaction.followup.send("You must be in a voice channel.")
+        voice_channel = vc_state.channel
+
         voice_client = interaction.guild.voice_client or await voice_channel.connect()
         if voice_client.channel.id != voice_channel.id:
             await voice_client.move_to(voice_channel)
@@ -252,38 +261,123 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         if guild_id not in SONG_QUEUES:
             SONG_QUEUES[guild_id] = deque()
 
-        first_name, first_artists = items.pop(0)
-        first_query = f"ytsearch1:{first_name} – {first_artists}"
+        # Mode A: Spotify playlist URL
+        if _is_spotify_playlist(source):
+            try:
+                raw_id = source.rstrip("/").split("/")[-1]
+                playlist_id = raw_id.split("?")[0]
+            except Exception:
+                return await interaction.followup.send("Couldn't parse a playlist ID from that URL.", ephemeral=True)
+
+            items: list[tuple[str, str]] = []
+            # fetch first page
+            results = spotify.playlist_items(
+                playlist_id,
+                fields="items.track(name,artists(name)),next",
+                additional_types=["track"]
+            )
+            def _collect(page):
+                for it in page.get("items", []):
+                    t = it.get("track")
+                    if t and t.get("name"):
+                        artists = ", ".join(a["name"] for a in t.get("artists", []))
+                        items.append((t["name"], artists))
+
+            _collect(results)
+            # optional: follow pagination if you want full lists in the future
+            # next_url = results.get("next")
+            # while next_url:
+            #     page = spotify.next(results)
+            #     results = page
+            #     _collect(results)
+            if not items:
+                return await interaction.followup.send("No tracks found in that playlist.", ephemeral=True)
+
+            if shuffle:
+                random.shuffle(items)
+
+            # Enqueue first immediately
+            first_name, first_artists = items.pop(0)
+            first_query = f"ytsearch1:{first_name} {first_artists}"
+            try:
+                first_info = await _search_ytdlp(first_query)
+                first_entry = first_info["entries"][0] if "entries" in first_info else first_info
+            except Exception:
+                return await interaction.followup.send("Failed to enqueue the first track.", ephemeral=True)
+
+            SONG_QUEUES[guild_id].append((first_entry["url"], first_entry.get("title", first_name)))
+
+            if not (voice_client.is_playing() or voice_client.is_paused()):
+                await interaction.followup.send(f"Now playing: **{first_entry.get('title', first_name)}**")
+                await play_next_song(voice_client, guild_id, interaction.channel, post_now_playing=False)
+            else:
+                await interaction.followup.send(f"Added **{first_entry.get('title', first_name)}** to the queue.")
+
+            async def enqueue_rest_spotify():
+                count = 1
+                for name, artists in items:
+                    q = f"ytsearch1:{name} {artists}"
+                    try:
+                        info = await _search_ytdlp(q)
+                        entry = info["entries"][0] if "entries" in info else info
+                    except Exception:
+                        continue
+                    SONG_QUEUES[guild_id].append((entry["url"], entry.get("title", name)))
+                    count += 1
+                await interaction.channel.send(f"Queued **{count}** tracks.")
+            asyncio.create_task(enqueue_rest_spotify())
+            return
+
+        # Mode B: text filename playlist
+        try:
+            lines = _load_text_playlist(source)
+        except FileNotFoundError:
+            return await interaction.followup.send("Text playlist not found.", ephemeral=True)
+        except ValueError:
+            return await interaction.followup.send("Invalid filename.", ephemeral=True)
+        except Exception:
+            return await interaction.followup.send("Failed to read that text playlist.", ephemeral=True)
+
+        if not lines:
+            return await interaction.followup.send("That text playlist is empty.", ephemeral=True)
+
+        if shuffle:
+            random.shuffle(lines)
+
+        # Enqueue first line immediately
+        first_line = lines.pop(0)
+        if first_line.startswith("http://") or first_line.startswith("https://"):
+            first_query = first_line
+        else:
+            first_query = f"ytsearch1:{first_line}"
         try:
             first_info = await _search_ytdlp(first_query)
             first_entry = first_info["entries"][0] if "entries" in first_info else first_info
         except Exception:
-            return await interaction.followup.send("Failed to enqueue the first track.", ephemeral=True)
+            return await interaction.followup.send("Failed to enqueue the first line from the file.", ephemeral=True)
 
-        SONG_QUEUES[guild_id].append((first_entry["url"], first_entry.get("title", first_name)))
+        SONG_QUEUES[guild_id].append((first_entry["url"], first_entry.get("title", first_line)))
 
         if not (voice_client.is_playing() or voice_client.is_paused()):
-            await interaction.followup.send(f"Now playing: **{first_entry.get('title', first_name)}**")
+            await interaction.followup.send(f"Now playing: **{first_entry.get('title', first_line)}**")
             await play_next_song(voice_client, guild_id, interaction.channel, post_now_playing=False)
         else:
-            await interaction.followup.send(f"Added **{first_entry.get('title', first_name)}** to the queue.")
-        print(f"Qeueued: {first_artists} – {first_name}")
+            await interaction.followup.send(f"Added **{first_entry.get('title', first_line)}** to the queue.")
 
-        async def enqueue_rest():
+        async def enqueue_rest_file():
             count = 1
-            for name, artists in items:
-                q = f"ytsearch1:{artists} – {name}"
+            for line in lines:
+                q = line if (line.startswith("http://") or line.startswith("https://")) else f"ytsearch1:{line}"
                 try:
                     info = await _search_ytdlp(q)
                     entry = info["entries"][0] if "entries" in info else info
                 except Exception:
                     continue
-                SONG_QUEUES[guild_id].append((entry["url"], entry.get("title", name)))
-                print(f"Qeueued: {artists} – {name}")
+                SONG_QUEUES[guild_id].append((entry["url"], entry.get("title", line)))
                 count += 1
             await interaction.channel.send(f"Queued **{count}** tracks.")
+        asyncio.create_task(enqueue_rest_file())
 
-        asyncio.create_task(enqueue_rest())
 
     #-------------------------- helper functions --------------------------
     async def play_next_song(voice_client, guild_id, channel, post_now_playing=True):
@@ -309,3 +403,6 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
 
             if post_now_playing:
                 asyncio.create_task(channel.send(f"Now playing: **{title}**"))
+
+
+
