@@ -235,6 +235,57 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         else:
             await interaction.response.send_message("Currently playing a song, but the title is unknown.")
 
+
+    @bot.tree.command(name="playnext", description="Insert a song to play next (requires something already playing and a non-empty queue).", guilds=guilds)
+    @app_commands.describe(song_query="Search query or URL to play next")
+    async def playnext(interaction: discord.Interaction, song_query: str):
+        # optional: match your /play gates
+        if interaction.user.id in private.BLACKLISTED_USERS:
+            await interaction.response.send_message(private.BLACKLISTED_MESSAGE, ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        vc = interaction.guild.voice_client
+        if vc is None or not (vc.is_playing() or vc.is_paused()):
+            await interaction.followup.send("Nothing is currently playing. Use /play instead.", ephemeral=True)
+            return
+
+        guild_id = str(interaction.guild_id)
+        q = SONG_QUEUES.get(guild_id)
+
+        # Per your requirement: only works if there is currently stuff in the queue
+        if not q or len(q) == 0:
+            await interaction.followup.send("The queue is empty. Use /play to start the queue, then /playnext to insert the next track.", ephemeral=True)
+            return
+
+        # Build query like /play
+        query = song_query if song_query.startswith(("http://", "https://")) else f"ytsearch1:{song_query}"
+
+        try:
+            results = await _search_ytdlp(query)
+        except Exception:
+            await interaction.followup.send("Search failed for that query.", ephemeral=True)
+            return
+
+        if "entries" in results:
+            entries = results.get("entries") or []
+            if not entries:
+                await interaction.followup.send("No results found.", ephemeral=True)
+                return
+            first = entries[0]
+        else:
+            first = results
+
+        audio_url = first["url"]
+        title = first.get("title", "Untitled")
+
+        # Insert at the front so it becomes the very next song
+        q.appendleft((audio_url, title))
+
+        await interaction.followup.send(f"Will play next: **{title}**")
+
+
     @bot.tree.command(
         name="playlist",
         description="Queue a Spotify playlist URL or a saved .txt file of queries.",
