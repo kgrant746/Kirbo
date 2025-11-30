@@ -49,7 +49,7 @@ TARGET_DATE = date(2025, 11, 14)  # set the CoD release date (YYYY, M, D)
 
 def make_name(days: int) -> str:
     if days <= 0:
-        return "CoD is out"
+        return "COD IS HERE!!!"
     unit = "DAY" if days == 1 else "DAYS"
     return f"{days} {unit} TILL COD"
 
