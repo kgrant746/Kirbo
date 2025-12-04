@@ -21,9 +21,9 @@ async def on_ready():
 
     task_manager.bot = bot
     # CoD Countdown Channel Name Updater
-    if not nightly_update.is_running():
-        await set_channel_name()
-        nightly_update.start()
+    # if not nightly_update.is_running():
+    #     await set_channel_name()
+    #     nightly_update.start()
 
     # Holiday Profile Picture Changer
     if not holiday_check.is_running():
