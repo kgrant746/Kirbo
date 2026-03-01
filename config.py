@@ -23,3 +23,9 @@ SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI")
 if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
     raise RuntimeError("Missing Spotify credentials")
+
+
+# Curseforge Stuff
+FILES_URL = "https://www.curseforge.com/minecraft/modpacks/team-rocket/files"
+CURSEFORGE_CHANNEL_ID = 530799669597700147
+CFWIDGET_URL = "https://api.cfwidget.com/minecraft/modpacks/team-rocket"
