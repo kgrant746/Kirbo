@@ -110,8 +110,12 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         if song_query.startswith("http://") or song_query.startswith("https://"):
             query = song_query
         else:
-            query = f"ytsearch1:{song_query}"
+            q = song_query.strip()
+            if q and not q.lower().endswith("lyrics"):
+                q = f"{q} lyrics"
+            query = f"ytsearch1:{q}"
 
+        print(f"[ytsearch] query={query}")
         results = await _search_ytdlp(query)
 
         if "entries" in results:
@@ -125,6 +129,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
 
         audio_url = first_track["url"]
         title = first_track.get("title", "Untitled")
+        print(f"[ytsearch] result_title={title}")
 
         guild_id = str(interaction.guild_id)
         if SONG_QUEUES.get(guild_id) is None:
@@ -263,6 +268,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         query = song_query if song_query.startswith(("http://", "https://")) else f"ytsearch1:{song_query}"
 
         try:
+            print(f"[ytsearch] query={query}")
             results = await _search_ytdlp(query)
         except Exception:
             await interaction.followup.send("Search failed for that query.", ephemeral=True)
@@ -279,6 +285,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
 
         audio_url = first["url"]
         title = first.get("title", "Untitled")
+        print(f"[ytsearch] result_title={title}")
 
         # Insert at the front so it becomes the very next song
         q.appendleft((audio_url, title))
