@@ -4,6 +4,8 @@ import command_handler
 from task_manager import holiday_check, run_holiday_check, nightly_update, set_channel_name
 import curseforge_check
 
+# TO UPDATE DEPENDENCIES: pip install -r requirements.txt --upgrade
+
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -33,7 +35,7 @@ async def on_ready():
         print("Finished running holiday check task")    # Test
         holiday_check.start()
 
-    #await curseforge_check.check_curseforge_scrape(bot, config.FILES_URL, config.CURSEFORGE_CHANNEL_ID)
+    # await curseforge_check.check_curseforge_scrape(bot, config.FILES_URL, config.CURSEFORGE_CHANNEL_ID)
     curseforge_check.start(bot)
 
 

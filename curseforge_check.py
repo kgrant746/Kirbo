@@ -95,6 +95,8 @@ async def _fetch_cfwidget_latest_file():
     )
     # name fields can vary too
     name = latest.get("display") or latest.get("name") or latest.get("title") or "New file"
+
+    # Remove trailing .zip if present
     if isinstance(name, str) and name.lower().endswith(".zip"):
         name = name[:-4]
 
@@ -171,7 +173,7 @@ async def check_curseforge(bot, announce_channel_id: int):
         await _announce(
             bot,
             announce_channel_id,
-            f"Team Rocket Modpack Update Released!\n{name}\n{url}"
+            f"<@&1557119813141401692> Team Rocket modpack update released!\n{url}"
         )
         return
 
@@ -186,5 +188,5 @@ async def check_curseforge(bot, announce_channel_id: int):
     await _announce(
         bot,
         announce_channel_id,
-        f"Team Rocket Modpack Update Released!\n{name}\n{url}"
+        f"<@&1557119813141401692> Team Rocket modpack update released!\n{url}"
     )

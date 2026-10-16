@@ -23,37 +23,24 @@ PLAYLISTS_DIR.mkdir(parents=True, exist_ok=True)
 SONG_QUEUES: Dict[str, Deque[Tuple[str, str]]] = {}
 
 async def _search_ytdlp(query: str) -> dict:
-    """Return yt-dlp info dict for a single track or ytsearch1 result, with SABR-resistant client fallbacks."""
-    import yt_dlp
-    from yt_dlp.utils import DownloadError, ExtractorError
+    """Extract YouTube video/audio information using yt-dlp."""
 
-    client_chain = ["tv_embedded", "android", "web_creator"]  # avoid plain "web"
-    last_err = None
+    opts = {
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": False,
+    }
+
     loop = asyncio.get_running_loop()
 
-    for client in client_chain:
-        opts = {
-            "format": "ba/bestaudio/best",
-            "noplaylist": True,
-            # Do not force-disable manifests; let yt-dlp pick workable ones
-            "extractor_args": {"youtube": {"player_client": client}},
-            "quiet": True,
-            "no_warnings": True,
-        }
-        try:
-            return await loop.run_in_executor(
-                None, lambda: yt_dlp.YoutubeDL(opts).extract_info(query, download=False)
-            )
-        except (DownloadError, ExtractorError) as e:
-            msg = str(e)
-            # SABR or missing URL indicators. Try next client.
-            if ("SABR" in msg) or ("missing a url" in msg) or ("Requested format is not available" in msg):
-                last_err = e
-                continue
-            # Other error. Bubble up.
-            raise
-    # If all clients failed, raise the last error so callers can message the user.
-    raise last_err if last_err else RuntimeError("yt-dlp failed with unknown error")
+    return await loop.run_in_executor(
+        None,
+        lambda: yt_dlp.YoutubeDL(opts).extract_info(
+            query,
+            download=False
+        )
+    )
 
 
 def _is_spotify_playlist(s: str) -> bool:
@@ -81,6 +68,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
     
     tree = bot.tree
     guilds = [discord.Object(id=config.GUILD_ID)]
+
 
     #-------------------------- /play --------------------------
     @bot.tree.command(name="play", description="Play a song or add it to the queue.", guilds=guilds)
@@ -110,13 +98,21 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         if song_query.startswith("http://") or song_query.startswith("https://"):
             query = song_query
         else:
-            q = song_query.strip()
-            if q and not q.lower().endswith("lyrics"):
-                q = f"{q} lyrics"
-            query = f"ytsearch1:{q}"
+            query = f"ytsearch1:{song_query}"
 
         print(f"[ytsearch] query={query}")
-        results = await _search_ytdlp(query)
+
+        try:
+            results = await _search_ytdlp(query)
+
+        except yt_dlp.utils.DownloadError as e:
+            print(f"[ytsearch] Failed: {e}")
+
+            await interaction.followup.send(
+                "Failed to load this YouTube video. Try another link or search.",
+                ephemeral=True
+            )
+            return
 
         if "entries" in results:
             tracks = results.get("entries", [])
@@ -461,6 +457,66 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
 
             if post_now_playing:
                 asyncio.create_task(channel.send(f"Now playing: **{title}**"))
+
+
+    #-------------------------- voice join troll --------------------------
+    # @bot.listen("on_voice_state_update")
+    # async def voice_join_troll(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    #     if member.bot:
+    #         return
+
+    #     if member.id != config.TROLL_USER_ID:
+    #         return
+
+    #     # Only trigger when they newly join a voice channel, not when muting/deafening/etc.
+    #     if before.channel is not None or after.channel is None:
+    #         return
+
+    #     text_channel = bot.get_channel(config.TROLL_TEXT_CHANNEL_ID)
+    #     if text_channel:
+    #         await text_channel.send("STAND READY FOR HIS ARRIVAL")
+
+    #     voice_channel = after.channel
+    #     voice_client = member.guild.voice_client
+
+    #     if voice_client is None:
+    #         voice_client = await voice_channel.connect()
+    #     elif voice_client.channel.id != voice_channel.id:
+    #         voice_client = await voice_client.move_to(voice_channel)
+
+    #     query = config.TROLL_YOUTUBE_URL
+
+    #     try:
+    #         print(f"[trollplay] query={query}")
+    #         results = await _search_ytdlp(query)
+    #     except Exception as e:
+    #         print(f"[trollplay] search failed: {e}")
+    #         if text_channel:
+    #             await text_channel.send("Troll song failed to load.")
+    #         return
+
+    #     if "entries" in results:
+    #         tracks = results.get("entries", [])
+    #         if not tracks:
+    #             return
+    #         first_track = tracks[0]
+    #     else:
+    #         first_track = results
+
+    #     audio_url = first_track["url"]
+    #     title = first_track.get("title", "Untitled")
+    #     print(f"[trollplay] result_title={title}")
+
+    #     guild_id = str(member.guild.id)
+    #     if SONG_QUEUES.get(guild_id) is None:
+    #         SONG_QUEUES[guild_id] = deque()
+
+    #     SONG_QUEUES[guild_id].append((audio_url, title))
+
+    #     if not (voice_client.is_playing() or voice_client.is_paused()):
+    #         if text_channel:
+    #             await text_channel.send(f"Now playing: **{title}**")
+    #         await play_next_song(voice_client, guild_id, text_channel or voice_channel, post_now_playing=False)
 
 
 

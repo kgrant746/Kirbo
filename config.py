@@ -29,3 +29,14 @@ if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
 FILES_URL = "https://www.curseforge.com/minecraft/modpacks/team-rocket/files"
 CURSEFORGE_CHANNEL_ID = 530799669597700147
 CFWIDGET_URL = "https://api.cfwidget.com/minecraft/modpacks/team-rocket"
+
+
+TROLL_USER_ID = 580546359610966037
+TROLL_TEXT_CHANNEL_ID = 530799669597700147
+TROLL_YOUTUBE_URL = "https://www.youtube.com/watch?v=UFQkmCDa93o&list=RDUFQkmCDa93o&start_radio=1"
+
+
+# Amongus
+SOUNDBOARD_SOUND_ID = 1479701681095708692
+SOUNDBOARD_SOURCE_GUILD_ID = 530799668741799951
+AMONGUS_TRIGGER_COOLDOWN = 15
