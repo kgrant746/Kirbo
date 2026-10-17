@@ -1,7 +1,7 @@
 from __future__ import annotations
 import asyncio
 import random
-import sys
+import re
 from collections import deque
 from typing import Dict, Deque, Tuple, Optional
 
@@ -128,6 +128,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         audio_url = first_track["url"]
         title = first_track.get("title", "Untitled")
         print(f"[ytsearch] result_title={title}")
+        print(f"[ytsearch] format={first_track.get('format_id')} protocol={first_track.get('protocol')}")
 
         guild_id = str(interaction.guild_id)
         if SONG_QUEUES.get(guild_id) is None:
@@ -445,11 +446,22 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
                 "options": "-vn -c:a libopus -b:a 96k",
             }
 
-            source = discord.FFmpegOpusAudio(
-                audio_url, **ffmpeg_options, executable=config.FFMPEG_PATH, stderr=sys.stderr
-            )
+            stderr_log = tempfile.TemporaryFile()
+            try:
+                source = discord.FFmpegOpusAudio(
+                    audio_url, **ffmpeg_options, executable=config.FFMPEG_PATH, stderr=stderr_log
+                )
+            except Exception:
+                stderr_log.close()
+                raise
 
             def after_play(error):
+                stderr_log.seek(0)
+                ffmpeg_stderr = stderr_log.read().decode("utf-8", errors="replace")
+                stderr_log.close()
+                exit_code = source._process.poll()
+                detail = re.sub(r"https?://\S+", "[stream URL]", ffmpeg_stderr)[-4000:]
+                print(f"[ffmpeg] exit={exit_code} stderr={detail or '<empty>'}")
                 if error:
                     print(f"Error playing {title}: {error}")
                 asyncio.run_coroutine_threadsafe(
@@ -457,7 +469,12 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
                     bot.loop
                 )
 
-            voice_client.play(source, after=after_play)
+            try:
+                voice_client.play(source, after=after_play)
+            except Exception:
+                stderr_log.close()
+                source.cleanup()
+                raise
 
             if post_now_playing:
                 asyncio.create_task(channel.send(f"Now playing: **{title}**"))
