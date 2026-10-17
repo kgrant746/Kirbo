@@ -2,7 +2,6 @@ from __future__ import annotations
 import asyncio
 import random
 import re
-import shlex
 from collections import deque
 from typing import Dict, Deque, Tuple, Optional
 
@@ -22,7 +21,8 @@ PLAYLISTS_DIR = Path(getattr(config, "PLAYLISTS_DIR", Path(__file__).parent / "p
 PLAYLISTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-SONG_QUEUES: Dict[str, Deque[Tuple[str, str, dict[str, str]]]] = {}
+SONG_QUEUES: Dict[str, Deque[Tuple[str, str]]] = {}
+LOADING_GUILDS: set[str] = set()
 
 async def _search_ytdlp(query: str) -> dict:
     """Extract YouTube video/audio information using yt-dlp."""
@@ -43,6 +43,19 @@ async def _search_ytdlp(query: str) -> dict:
             download=False
         )
     )
+
+
+def _download_ytdlp(url: str, directory: str) -> str:
+    with yt_dlp.YoutubeDL({
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "outtmpl": str(Path(directory) / "%(id)s.%(ext)s"),
+    }) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info)
+        if not Path(filename).is_file():
+            raise FileNotFoundError(filename)
+        return filename
 
 
 def _is_spotify_playlist(s: str) -> bool:
@@ -126,7 +139,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         else:
             first_track = results
 
-        audio_url = first_track["url"]
+        video_url = first_track["webpage_url"]
         title = first_track.get("title", "Untitled")
         print(f"[ytsearch] result_title={title}")
         print(f"[ytsearch] format={first_track.get('format_id')} protocol={first_track.get('protocol')}")
@@ -135,13 +148,13 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         if SONG_QUEUES.get(guild_id) is None:
             SONG_QUEUES[guild_id] = deque()
 
-        SONG_QUEUES[guild_id].append((audio_url, title, first_track.get("http_headers") or {}))
+        SONG_QUEUES[guild_id].append((video_url, title))
 
-        if voice_client.is_playing() or voice_client.is_paused():
+        if voice_client.is_playing() or voice_client.is_paused() or guild_id in LOADING_GUILDS:
             await interaction.followup.send(f"Added to queue: **{title}**")
         else:
-            await interaction.followup.send(f"Now playing: **{title}**")
-            await play_next_song(voice_client, guild_id, interaction.channel, post_now_playing=False)
+            await interaction.followup.send(f"Loading: **{title}**")
+            await play_next_song(voice_client, guild_id, interaction.channel)
 
     #-------------------------- /skip --------------------------
     @bot.tree.command(name="skip", description="Skips the current playing song", guilds=guilds)
@@ -211,7 +224,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
             return
 
         message_lines = []
-        for idx, (_, title, _) in enumerate(queue):
+        for idx, (_, title) in enumerate(queue):
             message_lines.append(f"{idx + 1}. {title}")
 
         message = "\n".join(message_lines)
@@ -283,12 +296,12 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         else:
             first = results
 
-        audio_url = first["url"]
+        video_url = first["webpage_url"]
         title = first.get("title", "Untitled")
         print(f"[ytsearch] result_title={title}")
 
         # Insert at the front so it becomes the very next song
-        q.appendleft((audio_url, title, first.get("http_headers") or {}))
+        q.appendleft((video_url, title))
 
         await interaction.followup.send(f"Will play next: **{title}**")
 
@@ -363,11 +376,11 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
             except Exception:
                 return await interaction.followup.send("Failed to enqueue the first track.", ephemeral=True)
 
-            SONG_QUEUES[guild_id].append((first_entry["url"], first_entry.get("title", first_name), first_entry.get("http_headers") or {}))
+            SONG_QUEUES[guild_id].append((first_entry["webpage_url"], first_entry.get("title", first_name)))
 
-            if not (voice_client.is_playing() or voice_client.is_paused()):
-                await interaction.followup.send(f"Now playing: **{first_entry.get('title', first_name)}**")
-                await play_next_song(voice_client, guild_id, interaction.channel, post_now_playing=False)
+            if not (voice_client.is_playing() or voice_client.is_paused() or guild_id in LOADING_GUILDS):
+                await interaction.followup.send(f"Loading: **{first_entry.get('title', first_name)}**")
+                await play_next_song(voice_client, guild_id, interaction.channel)
             else:
                 await interaction.followup.send(f"Added **{first_entry.get('title', first_name)}** to the queue.")
 
@@ -380,7 +393,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
                         entry = info["entries"][0] if "entries" in info else info
                     except Exception:
                         continue
-                    SONG_QUEUES[guild_id].append((entry["url"], entry.get("title", name), entry.get("http_headers") or {}))
+                    SONG_QUEUES[guild_id].append((entry["webpage_url"], entry.get("title", name)))
                     count += 1
                 await interaction.channel.send(f"Queued **{count}** tracks.")
             asyncio.create_task(enqueue_rest_spotify())
@@ -414,11 +427,11 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         except Exception:
             return await interaction.followup.send("Failed to enqueue the first line from the file.", ephemeral=True)
 
-        SONG_QUEUES[guild_id].append((first_entry["url"], first_entry.get("title", first_line), first_entry.get("http_headers") or {}))
+        SONG_QUEUES[guild_id].append((first_entry["webpage_url"], first_entry.get("title", first_line)))
 
-        if not (voice_client.is_playing() or voice_client.is_paused()):
-            await interaction.followup.send(f"Now playing: **{first_entry.get('title', first_line)}**")
-            await play_next_song(voice_client, guild_id, interaction.channel, post_now_playing=False)
+        if not (voice_client.is_playing() or voice_client.is_paused() or guild_id in LOADING_GUILDS):
+            await interaction.followup.send(f"Loading: **{first_entry.get('title', first_line)}**")
+            await play_next_song(voice_client, guild_id, interaction.channel)
         else:
             await interaction.followup.send(f"Added **{first_entry.get('title', first_line)}** to the queue.")
 
@@ -431,57 +444,70 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
                     entry = info["entries"][0] if "entries" in info else info
                 except Exception:
                     continue
-                SONG_QUEUES[guild_id].append((entry["url"], entry.get("title", line), entry.get("http_headers") or {}))
+                SONG_QUEUES[guild_id].append((entry["webpage_url"], entry.get("title", line)))
                 count += 1
             await interaction.channel.send(f"Queued **{count}** tracks.")
         asyncio.create_task(enqueue_rest_file())
 
 
     #-------------------------- helper functions --------------------------
-    async def play_next_song(voice_client, guild_id, channel, post_now_playing=True):
-        if SONG_QUEUES[guild_id]:
-            audio_url, title, http_headers = SONG_QUEUES[guild_id].popleft()
+    async def play_next_song(voice_client, guild_id, channel):
+        if guild_id in LOADING_GUILDS:
+            return
+        LOADING_GUILDS.add(guild_id)
+        try:
+            while SONG_QUEUES[guild_id] and voice_client.is_connected():
+                video_url, title = SONG_QUEUES[guild_id].popleft()
+                track_dir = tempfile.TemporaryDirectory()
+                try:
+                    audio_file = await asyncio.to_thread(_download_ytdlp, video_url, track_dir.name)
+                except Exception as error:
+                    track_dir.cleanup()
+                    print(f"[yt-dlp] Failed to download {title}: {error}")
+                    await channel.send(f"Could not load **{title}**; skipping it.")
+                    continue
 
-            ffmpeg_options = {
-                "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-                "options": "-vn -c:a libopus -b:a 96k",
-            }
-            if http_headers:
-                headers = "".join(f"{key}: {value}\r\n" for key, value in http_headers.items())
-                ffmpeg_options["before_options"] += f" -headers {shlex.quote(headers)}"
+                if not voice_client.is_connected():
+                    track_dir.cleanup()
+                    return
 
-            stderr_log = tempfile.TemporaryFile()
-            try:
-                source = discord.FFmpegOpusAudio(
-                    audio_url, **ffmpeg_options, executable=config.FFMPEG_PATH, stderr=stderr_log
-                )
-            except Exception:
-                stderr_log.close()
-                raise
+                stderr_log = tempfile.TemporaryFile()
+                try:
+                    source = discord.FFmpegOpusAudio(
+                        audio_file, options="-vn -c:a libopus -b:a 96k",
+                        executable=config.FFMPEG_PATH, stderr=stderr_log
+                    )
+                except Exception:
+                    stderr_log.close()
+                    track_dir.cleanup()
+                    raise
 
-            def after_play(error):
-                stderr_log.seek(0)
-                ffmpeg_stderr = stderr_log.read().decode("utf-8", errors="replace")
-                stderr_log.close()
-                exit_code = source._process.poll()
-                detail = re.sub(r"https?://\S+", "[stream URL]", ffmpeg_stderr)[-4000:]
-                print(f"[ffmpeg] exit={exit_code} stderr={detail or '<empty>'}")
-                if error:
-                    print(f"Error playing {title}: {error}")
-                asyncio.run_coroutine_threadsafe(
-                    play_next_song(voice_client, guild_id, channel, post_now_playing=True),
-                    bot.loop
-                )
+                def after_play(error):
+                    stderr_log.seek(0)
+                    ffmpeg_stderr = stderr_log.read().decode("utf-8", errors="replace")
+                    stderr_log.close()
+                    track_dir.cleanup()
+                    exit_code = source._process.poll()
+                    detail = re.sub(r"https?://\S+", "[stream URL]", ffmpeg_stderr)[-4000:]
+                    print(f"[ffmpeg] exit={exit_code} stderr={detail or '<empty>'}")
+                    if error:
+                        print(f"Error playing {title}: {error}")
+                    asyncio.run_coroutine_threadsafe(
+                        play_next_song(voice_client, guild_id, channel), bot.loop
+                    )
 
-            try:
-                voice_client.play(source, after=after_play)
-            except Exception:
-                stderr_log.close()
-                source.cleanup()
-                raise
+                try:
+                    voice_client.play(source, after=after_play)
+                except Exception:
+                    stderr_log.close()
+                    source.cleanup()
+                    track_dir.cleanup()
+                    raise
 
-            if post_now_playing:
                 asyncio.create_task(channel.send(f"Now playing: **{title}**"))
+                return
+        finally:
+            LOADING_GUILDS.discard(guild_id)
 
 
     #-------------------------- voice join troll --------------------------
