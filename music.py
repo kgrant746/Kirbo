@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+import shlex
 from collections import deque
 from typing import Dict, Deque, Tuple, Optional
 
@@ -21,7 +22,7 @@ PLAYLISTS_DIR = Path(getattr(config, "PLAYLISTS_DIR", Path(__file__).parent / "p
 PLAYLISTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-SONG_QUEUES: Dict[str, Deque[Tuple[str, str]]] = {}
+SONG_QUEUES: Dict[str, Deque[Tuple[str, str, dict[str, str]]]] = {}
 
 async def _search_ytdlp(query: str) -> dict:
     """Extract YouTube video/audio information using yt-dlp."""
@@ -134,7 +135,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         if SONG_QUEUES.get(guild_id) is None:
             SONG_QUEUES[guild_id] = deque()
 
-        SONG_QUEUES[guild_id].append((audio_url, title))
+        SONG_QUEUES[guild_id].append((audio_url, title, first_track.get("http_headers") or {}))
 
         if voice_client.is_playing() or voice_client.is_paused():
             await interaction.followup.send(f"Added to queue: **{title}**")
@@ -210,7 +211,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
             return
 
         message_lines = []
-        for idx, (_, title) in enumerate(queue):
+        for idx, (_, title, _) in enumerate(queue):
             message_lines.append(f"{idx + 1}. {title}")
 
         message = "\n".join(message_lines)
@@ -287,7 +288,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         print(f"[ytsearch] result_title={title}")
 
         # Insert at the front so it becomes the very next song
-        q.appendleft((audio_url, title))
+        q.appendleft((audio_url, title, first.get("http_headers") or {}))
 
         await interaction.followup.send(f"Will play next: **{title}**")
 
@@ -362,7 +363,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
             except Exception:
                 return await interaction.followup.send("Failed to enqueue the first track.", ephemeral=True)
 
-            SONG_QUEUES[guild_id].append((first_entry["url"], first_entry.get("title", first_name)))
+            SONG_QUEUES[guild_id].append((first_entry["url"], first_entry.get("title", first_name), first_entry.get("http_headers") or {}))
 
             if not (voice_client.is_playing() or voice_client.is_paused()):
                 await interaction.followup.send(f"Now playing: **{first_entry.get('title', first_name)}**")
@@ -379,7 +380,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
                         entry = info["entries"][0] if "entries" in info else info
                     except Exception:
                         continue
-                    SONG_QUEUES[guild_id].append((entry["url"], entry.get("title", name)))
+                    SONG_QUEUES[guild_id].append((entry["url"], entry.get("title", name), entry.get("http_headers") or {}))
                     count += 1
                 await interaction.channel.send(f"Queued **{count}** tracks.")
             asyncio.create_task(enqueue_rest_spotify())
@@ -413,7 +414,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         except Exception:
             return await interaction.followup.send("Failed to enqueue the first line from the file.", ephemeral=True)
 
-        SONG_QUEUES[guild_id].append((first_entry["url"], first_entry.get("title", first_line)))
+        SONG_QUEUES[guild_id].append((first_entry["url"], first_entry.get("title", first_line), first_entry.get("http_headers") or {}))
 
         if not (voice_client.is_playing() or voice_client.is_paused()):
             await interaction.followup.send(f"Now playing: **{first_entry.get('title', first_line)}**")
@@ -430,7 +431,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
                     entry = info["entries"][0] if "entries" in info else info
                 except Exception:
                     continue
-                SONG_QUEUES[guild_id].append((entry["url"], entry.get("title", line)))
+                SONG_QUEUES[guild_id].append((entry["url"], entry.get("title", line), entry.get("http_headers") or {}))
                 count += 1
             await interaction.channel.send(f"Queued **{count}** tracks.")
         asyncio.create_task(enqueue_rest_file())
@@ -439,12 +440,15 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
     #-------------------------- helper functions --------------------------
     async def play_next_song(voice_client, guild_id, channel, post_now_playing=True):
         if SONG_QUEUES[guild_id]:
-            audio_url, title = SONG_QUEUES[guild_id].popleft()
+            audio_url, title, http_headers = SONG_QUEUES[guild_id].popleft()
 
             ffmpeg_options = {
                 "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
                 "options": "-vn -c:a libopus -b:a 96k",
             }
+            if http_headers:
+                headers = "".join(f"{key}: {value}\r\n" for key, value in http_headers.items())
+                ffmpeg_options["before_options"] += f" -headers {shlex.quote(headers)}"
 
             stderr_log = tempfile.TemporaryFile()
             try:
