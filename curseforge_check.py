@@ -85,7 +85,11 @@ async def _fetch_cfwidget_latest_file():
         print("[CurseForge] CFWidget returned no files.")
         return None
 
-    latest = files[0]
+    latest = max((file for file in files if str(file.get("id", "")).isdigit()),
+                 key=lambda file: int(file["id"]), default=None)
+    if latest is None:
+        print("[CurseForge] CFWidget returned no valid file IDs.")
+        return None
     file_id = str(latest.get("id") or "")
     # urls section shape can vary a bit, handle common ones
     url = (
@@ -136,7 +140,9 @@ async def _fetch_html_latest_file():
 
     soup = BeautifulSoup(html, "html.parser")
 
-    link = soup.find("a", href=lambda h: h and "/files/" in h)
+    links = soup.find_all("a", href=lambda h: h and "/files/" in h)
+    link = max((item for item in links if item["href"].rstrip("/").split("/")[-1].isdigit()),
+               key=lambda item: int(item["href"].rstrip("/").split("/")[-1]), default=None)
     if not link:
         print("[CurseForge] HTML scrape: could not find file link on page.")
         return None
@@ -177,8 +183,8 @@ async def check_curseforge(bot, announce_channel_id: int):
         )
         return
 
-    if str(last_seen) == str(file_id):
-        print(f"[CurseForge] No change. file_id still {file_id}.")
+    if str(last_seen).isdigit() and int(file_id) <= int(last_seen):
+        print(f"[CurseForge] No newer file. latest={file_id}, last_seen={last_seen}.")
         return
 
     state["last_file_id"] = file_id

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import random
+import sys
 from collections import deque
 from typing import Dict, Deque, Tuple, Optional
 
@@ -84,16 +85,17 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         if interaction.user.id in private.SPECIAL_USERS:
             await interaction.followup.send(private.SPECIAL_MESSAGE)
 
-        voice_channel = interaction.user.voice.channel
-        if voice_channel is None:
+        voice_state = getattr(interaction.user, "voice", None)
+        if voice_state is None or voice_state.channel is None:
             await interaction.followup.send("You must be in a voice channel.")
             return
+        voice_channel = voice_state.channel
 
         voice_client = interaction.guild.voice_client
         if voice_client is None:
             voice_client = await voice_channel.connect()
         elif voice_client.channel.id != voice_channel.id:
-            voice_client = await voice_client.move_to(voice_channel)
+            await voice_client.move_to(voice_channel)
 
         if song_query.startswith("http://") or song_query.startswith("https://"):
             query = song_query
@@ -440,10 +442,12 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
 
             ffmpeg_options = {
                 "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-                "options": '-vn -af "loudnorm=I=-16:TP=-1.5:LRA=11" -c:a libopus -b:a 96k',
+                "options": "-vn -c:a libopus -b:a 96k",
             }
 
-            source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options, executable= config.FFMPEG_PATH)
+            source = discord.FFmpegOpusAudio(
+                audio_url, **ffmpeg_options, executable=config.FFMPEG_PATH, stderr=sys.stderr
+            )
 
             def after_play(error):
                 if error:
