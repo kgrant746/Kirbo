@@ -9,3 +9,4 @@ bin
 .cache
 references.py
 data
+cf_scrape_state.json
