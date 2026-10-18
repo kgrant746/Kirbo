@@ -153,8 +153,14 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
         if voice_client.is_playing() or voice_client.is_paused() or guild_id in LOADING_GUILDS:
             await interaction.followup.send(f"Added to queue: **{title}**")
         else:
-            await interaction.followup.send(f"Loading: **{title}**")
-            await play_next_song(voice_client, guild_id, interaction.channel)
+            try:
+                started = await play_next_song(voice_client, guild_id, interaction.channel, announce=False)
+            except Exception:
+                await interaction.edit_original_response(content="Could not start playback.")
+                raise
+            await interaction.edit_original_response(
+                content=f"Now playing: **{started}**" if started else f"Could not play **{title}**."
+            )
 
     #-------------------------- /skip --------------------------
     @bot.tree.command(name="skip", description="Skips the current playing song", guilds=guilds)
@@ -244,11 +250,9 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
             await interaction.response.send_message("No song is currently playing.")
             return
 
-        guild_id = str(interaction.guild_id)
-        queue = SONG_QUEUES.get(guild_id)
+        current_song = getattr(voice_client.source, "title", None)
 
-        if queue and len(queue) > 0:
-            current_song = queue[0][1]
+        if current_song:
             await interaction.response.send_message(f"Currently playing: **{current_song}**")
         else:
             await interaction.response.send_message("Currently playing a song, but the title is unknown.")
@@ -451,7 +455,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
 
 
     #-------------------------- helper functions --------------------------
-    async def play_next_song(voice_client, guild_id, channel):
+    async def play_next_song(voice_client, guild_id, channel, announce=True):
         if guild_id in LOADING_GUILDS:
             return
         LOADING_GUILDS.add(guild_id)
@@ -464,7 +468,8 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
                 except Exception as error:
                     track_dir.cleanup()
                     print(f"[yt-dlp] Failed to download {title}: {error}")
-                    await channel.send(f"Could not load **{title}**; skipping it.")
+                    if announce:
+                        await channel.send(f"Could not load **{title}**; skipping it.")
                     continue
 
                 if not voice_client.is_connected():
@@ -477,6 +482,7 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
                         audio_file, options="-vn -c:a libopus -b:a 96k",
                         executable=config.FFMPEG_PATH, stderr=stderr_log
                     )
+                    source.title = title
                 except Exception:
                     stderr_log.close()
                     track_dir.cleanup()
@@ -504,8 +510,9 @@ def setup_music(bot: commands.Bot | discord.Bot) -> None:
                     track_dir.cleanup()
                     raise
 
-                asyncio.create_task(channel.send(f"Now playing: **{title}**"))
-                return
+                if announce:
+                    asyncio.create_task(channel.send(f"Now playing: **{title}**"))
+                return title
         finally:
             LOADING_GUILDS.discard(guild_id)
 
