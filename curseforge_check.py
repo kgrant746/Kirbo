@@ -7,6 +7,9 @@ import config
 
 _bot = None
 
+# Toggle for sending message in Update Notification in Discord
+TRIGGER_MESSAGE = False
+
 # CFWidget public JSON endpoint (no official CF API key required)
 # You can use either:
 #   - project path: https://api.cfwidget.com/minecraft/modpacks/team-rocket
@@ -172,16 +175,17 @@ async def check_curseforge(bot, announce_channel_id: int):
     last_seen = state.get("last_file_id")
 
     # First run: you asked to trigger an announcement
-    if last_seen is None:
-        state["last_file_id"] = file_id
-        _save_cf_state(state)
-        print(f"[CurseForge] First run. Stored file_id={file_id}. Triggering announcement.")
-        await _announce(
-            bot,
-            announce_channel_id,
-            f"<@&1557119813141401692> Team Rocket modpack update released!\n{url}"
-        )
-        return
+    if TRIGGER_MESSAGE:
+        if last_seen is None:
+            state["last_file_id"] = file_id
+            _save_cf_state(state)
+            print(f"[CurseForge] First run. Stored file_id={file_id}. Triggering announcement.")
+            await _announce(
+                bot,
+                announce_channel_id,
+                f"<@&1557119813141401692> Team Rocket modpack update released!\n{url}"
+            )
+            return
 
     if str(last_seen).isdigit() and int(file_id) <= int(last_seen):
         print(f"[CurseForge] No newer file. latest={file_id}, last_seen={last_seen}.")
@@ -191,8 +195,9 @@ async def check_curseforge(bot, announce_channel_id: int):
     _save_cf_state(state)
     print(f"[CurseForge] Update detected. old={last_seen} new={file_id}")
 
-    await _announce(
-        bot,
-        announce_channel_id,
-        f"<@&1557119813141401692> Team Rocket modpack update released!\n{url}"
-    )
+    if TRIGGER_MESSAGE:
+        await _announce(
+            bot,
+            announce_channel_id,
+            f"<@&1557119813141401692> Team Rocket modpack update released!\n{url}"
+        )
