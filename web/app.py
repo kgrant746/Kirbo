@@ -39,6 +39,8 @@ class Website:
         self.streams = set()
         self.inflight = set()
         self.session_lock = asyncio.Lock()
+        self.discord_limits = {}
+        self.discord_global_limit = 0
         self.app = web.Application(middlewares=[self.guard], client_max_size=1024 * 1024)
         self.app.add_routes([
             web.get('/', self.index), web.get('/auth/login', self.login),
@@ -69,7 +71,7 @@ class Website:
             if request.path.startswith('/api/'):
                 if request.method != 'GET' and request.headers.get('Origin') != self.origin:
                     raise web.HTTPForbidden(reason='Invalid request origin')
-                session = await self.session(request)
+                session = await self.session(request, force=request.method != 'GET')
                 request['session'] = session
                 if request.method != 'GET' and not secrets.compare_digest(request.headers.get('X-CSRF-Token', ''), session['csrf']):
                     raise web.HTTPForbidden(reason='Invalid request token')
@@ -78,6 +80,8 @@ class Website:
             response = web.json_response({'error': error.reason}, status=error.status) if request.path.startswith('/api/') else web.Response(
                 text='<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kirbo · Sign in</title><link rel="stylesheet" href="/static/app.css"></head><body><div class="login-screen"><div class="login-card"><img src="/static/icon.svg" width="72" height="72" alt="Kirbo"><h1>Not quite there.</h1><p>' + html.escape(error.reason) + '</p><a class="button primary discord-login" href="/">Back to Kirbo</a></div></div></body></html>',
                 content_type='text/html', status=error.status)
+            if 'Retry-After' in error.headers:
+                response.headers['Retry-After'] = error.headers['Retry-After']
         except (ValueError, KeyError, TypeError) as error:
             response = web.json_response({'error': str(error)}, status=409)
         except Exception:
@@ -93,12 +97,44 @@ class Website:
         return response
 
     async def discord(self, path, token):
-        async with self.http.get(API + path, headers={'Authorization': 'Bearer ' + token}) as response:
-            if response.status in (401, 403, 404):
-                raise web.HTTPForbidden(reason='Discord access or server membership could not be verified. Sign in again.')
-            if response.status != 200:
-                raise web.HTTPServiceUnavailable(reason='Discord verification is unavailable. Please try again.')
-            return await response.json()
+        key = (digest(token), path)
+        self.discord_limits = {k: until for k, until in self.discord_limits.items() if until > time.monotonic()}
+        for attempt in range(2):
+            delay = max(self.discord_limits.get(key, 0), self.discord_global_limit) - time.monotonic()
+            if delay > 2:
+                raise web.HTTPServiceUnavailable(reason='Discord rate-limited membership checks. Please try again.',
+                                                 headers={'Retry-After': str(max(1, int(delay) + 1))})
+            if delay > 0:
+                await asyncio.sleep(delay)
+            try:
+                async with self.http.get(API + path, headers={'Authorization': 'Bearer ' + token}) as response:
+                    if response.status == 429:
+                        try:
+                            data = await response.json(content_type=None)
+                        except ValueError:
+                            data = {}
+                        retry = max(0, float(data.get('retry_after', response.headers.get('Retry-After', 1))))
+                        self.discord_limits[key] = time.monotonic() + retry
+                        if data.get('global'):
+                            self.discord_global_limit = self.discord_limits[key]
+                        logging.warning('Discord membership verification HTTP 429; retry_after=%s', retry)
+                        if attempt == 0 and retry <= 2:
+                            continue
+                        raise web.HTTPServiceUnavailable(reason='Discord rate-limited membership checks. Please try again.',
+                                                         headers={'Retry-After': str(max(1, int(retry) + 1))})
+                    if response.headers.get('X-RateLimit-Remaining') == '0':
+                        reset = float(response.headers.get('X-RateLimit-Reset-After', 0))
+                        self.discord_limits[key] = time.monotonic() + max(0, reset)
+                    if response.status in (401, 403, 404):
+                        logging.warning('Discord membership verification HTTP %s', response.status)
+                        raise web.HTTPForbidden(reason='Discord access or server membership could not be verified. Sign in again.')
+                    if response.status != 200:
+                        logging.warning('Discord membership verification HTTP %s', response.status)
+                        raise web.HTTPServiceUnavailable(reason=f'Discord membership verification returned HTTP {response.status}. Please try again.')
+                    return await response.json()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+                logging.warning('Discord membership verification connection failed: %s', type(error).__name__)
+                raise web.HTTPServiceUnavailable(reason='Could not connect to Discord to verify membership. Please try again.') from None
 
     async def token(self, data):
         async with self.http.post(API + '/oauth2/token', data=dict(data, client_id=self.client_id, client_secret=self.secret)) as response:
@@ -208,7 +244,6 @@ class Website:
                 try:
                     await asyncio.wait_for(event.wait(), timeout=20)
                 except asyncio.TimeoutError:
-                    await self.session(request, force=True)
                     await response.write(b': heartbeat\n\n')
         except (ConnectionResetError, asyncio.CancelledError, web.HTTPException):
             pass
@@ -232,7 +267,7 @@ class Website:
                 self.inflight.discard(ident)
 
     async def perform_action(self, request):
-        session = await self.session(request, force=True)
+        session = request['session']
         data = await request.json()
         actor = session['user']['username']
         action = data.get('action')

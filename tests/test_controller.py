@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -243,6 +243,53 @@ class WebSecurityTests(ControllerCase):
         cookie = response.headers['Set-Cookie']
         for flag in ['HttpOnly','Secure','SameSite=Lax']:
             self.assertIn(flag,cookie)
+
+    async def test_action_verifies_membership_only_once(self):
+        response = await self.client.post('/api/action', json={'action':'clear'}, headers=self.headers)
+        self.assertEqual(response.status, 200)
+        self.site.membership.assert_awaited_once()
+
+    def discord_response(self, status, data, headers=None):
+        response = Mock(status=status, headers=headers or {})
+        response.json = AsyncMock(return_value=data)
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=False)
+        return response
+
+    async def test_short_discord_rate_limit_retries_before_verifying(self):
+        responses = [self.discord_response(429, {'retry_after':0}),
+                     self.discord_response(200, {'user':{'id':'12345'}})]
+        with patch.object(self.site.http, 'get', side_effect=responses) as get:
+            result = await self.site.discord('/membership-test', 'private-token')
+        self.assertEqual(result['user']['id'], '12345')
+        self.assertEqual(get.call_count, 2)
+
+    async def test_long_discord_rate_limit_blocks_without_repeating_requests(self):
+        from aiohttp import web
+        with patch.object(self.site.http, 'get', return_value=self.discord_response(429, {'retry_after':60})) as get:
+            for _ in range(2):
+                with self.assertRaises(web.HTTPServiceUnavailable) as caught:
+                    await self.site.discord('/membership-test', 'private-token')
+                self.assertIn('Retry-After', caught.exception.headers)
+            self.assertEqual(get.call_count, 1)
+
+    async def test_upstream_error_reports_status_without_token(self):
+        from aiohttp import web
+        with patch.object(self.site.http, 'get', return_value=self.discord_response(502, {})):
+            with self.assertLogs(level='WARNING') as logs:
+                with self.assertRaises(web.HTTPServiceUnavailable) as caught:
+                    await self.site.discord('/membership-test', 'private-token')
+        self.assertIn('502', caught.exception.reason)
+        self.assertNotIn('private-token', ''.join(logs.output))
+
+    async def test_failed_verification_never_modifies_queue_or_deletes_session(self):
+        from aiohttp import web
+        self.music.queue = [track('protected')]
+        self.site.membership.side_effect = web.HTTPServiceUnavailable(reason='Discord rate-limited membership checks.')
+        response = await self.client.post('/api/action', json={'action':'clear'}, headers=self.headers)
+        self.assertEqual(response.status, 503)
+        self.assertEqual(len(self.music.queue), 1)
+        self.assertIsNotNone(self.store.db.execute('SELECT id FROM sessions WHERE id=?', (digest('test-cookie'),)).fetchone())
 
 
 if __name__ == '__main__':

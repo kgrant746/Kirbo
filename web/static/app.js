@@ -87,15 +87,16 @@ function tab(name) {
     $(`${item}-page`).hidden = item !== name;
     $(`tab-${item}`).setAttribute("aria-selected", item === name);
   }
-  document
-    .querySelectorAll(".nav")
-    .forEach((n) => n.classList.toggle("active", n.dataset.tab === name));
   localStorage.setItem("kirbo-tab", name);
   if (state) render();
 }
 document
   .querySelectorAll("[data-tab]")
   .forEach((button) => (button.onclick = () => tab(button.dataset.tab)));
+document.querySelector(".brand").onclick = (event) => {
+  event.preventDefault();
+  tab("queue");
+};
 function accept(next) {
   if (dragging) {
     deferredState = next;
