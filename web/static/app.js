@@ -181,7 +181,7 @@ function render() {
   updateProgress();
   $("voice-status").textContent = state.channel
     ? `# ${state.channel}`
-    : "Not connected";
+    : "Not in a voice channel";
   const psig = JSON.stringify([selected, state.playlists]);
   if (activeTab === "playlists" && psig !== librarySignature) {
     renderLibrary();
@@ -207,7 +207,7 @@ function updateProgress() {
   let elapsed = Math.max(0, Number(state.position) || 0) + (advancing ? (performance.now() - sampledAt) / 1000 : 0);
   elapsed = total ? Math.min(total, elapsed) : 0;
   $("elapsed").textContent = duration(Math.floor(elapsed));
-  $("remaining").textContent = total ? `−${duration(Math.ceil(total - elapsed))}` : "0:00";
+  $("track-duration").textContent = duration(total);
   $("progress-fill").style.width = `${total ? elapsed / total * 100 : 0}%`;
   $("song-progress").setAttribute("aria-valuemax", total || 1);
   $("song-progress").setAttribute("aria-valuenow", elapsed);

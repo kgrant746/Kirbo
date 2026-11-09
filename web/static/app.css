@@ -242,13 +242,6 @@ p {
   background: #382933;
   color: #f0b1d0;
 }
-.nav-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  margin-left: auto;
-}
 .sidebar-note {
   margin-top: auto;
   padding: 16px 10px;
@@ -315,13 +308,10 @@ main {
   margin: auto;
 }
 .page-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   margin-bottom: 28px;
 }
 .page-heading h1 {
-  margin: 8px 0;
+  margin: 0;
 }
 .tabs {
   display: flex;
@@ -650,16 +640,17 @@ main {
 }
 .player-track > div { min-width: 0; }
 .player-controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, 35px);
   align-items: center;
+  justify-items: center;
   gap: 17px;
   justify-content: center;
 }
 .player-center { min-width: 0; width: 100%; max-width: 570px; justify-self: center; }
-.playback-timeline { display: flex; gap: 9px; align-items: center; margin-top: 9px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
-.playback-timeline > span { min-width: 36px; }
+.playback-timeline { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 9px; align-items: center; margin-top: 9px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .playback-timeline > span:last-child { text-align: right; }
-.song-progress { height: 4px; flex: 1; overflow: hidden; border-radius: 4px; background: #51515d; }
+.song-progress { height: 4px; overflow: hidden; border-radius: 4px; background: #51515d; }
 #progress-fill { height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width 0.25s linear; }
 .player-controls svg { width: 21px; height: 21px; display: block; fill: currentColor; }
 .player-controls .pause-glyph { fill: none; }
@@ -1088,9 +1079,6 @@ dialog::backdrop {
     gap: 0;
     padding: 12px;
   }
-  .nav .nav-dot {
-    display: none;
-  }
   .nav > span:first-child {
     font-size: 21px;
   }
@@ -1189,10 +1177,11 @@ dialog::backdrop {
     left: 65px;
     padding: 14px;
     gap: 8px;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
   }
-  .player-center { display: contents; }
-  .playback-timeline { grid-column: 1 / -1; width: 100%; margin-top: 0; }
+  main { padding-bottom: 145px; }
+  .player-track { grid-column: 1 / -1; }
+  .player-center { grid-column: 1 / -1; }
   .player-track .cover {
     display: none;
   }

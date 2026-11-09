@@ -61,8 +61,17 @@
       publish();
       check(document.getElementById("connection").textContent === "Synced with Discord", "Connection label did not recover with the stream");
       check(document.querySelector(".creator-credit").textContent.includes("CosmicCats"), "Creator credit is missing");
-      check(document.querySelector(".brand span").textContent === "POYO", "Brand tagline is incorrect");
+      check(document.querySelector(".brand span").textContent === "POYO POYO", "Brand tagline is incorrect");
       check(!document.querySelector(".live-badge") && !document.querySelector(".page-heading p") && !document.querySelector(".sidebar-note p"), "Removed flavor text is still present");
+      check(!document.querySelector(".page-heading .eyebrow, .nav-dot, #library-view .section-heading p, #log-page .section-heading p"), "Removed labels or navigation dot are still present");
+      check(document.getElementById("tab-log").textContent.trim() === "Logs", "Logs tab label is incorrect");
+      const centerX = node => { const rect = node.getBoundingClientRect(); return rect.left + rect.width / 2; };
+      const checkPlayerCenter = () => check(Math.abs(centerX(document.getElementById("pause-button")) - centerX(document.getElementById("song-progress"))) < 1, "Play/Pause is not centered on the progress line");
+      checkPlayerCenter();
+      const totalTime = document.getElementById("track-duration").textContent;
+      fixture.channel = null; fixture.revision++; publish();
+      check(document.getElementById("voice-status").textContent === "Not in a voice channel", "Disconnected voice label is incorrect");
+      fixture.channel = initial.channel; fixture.revision++; publish();
       const playerImage = document.querySelector("#player-track img");
       const currentImage = document.querySelector("#current-row img");
       const queueImages = [...document.querySelectorAll("#queue-list img")];
@@ -71,6 +80,11 @@
         publish();
         tab("playlists"); tab("log"); tab("queue");
       }
+      check(totalTime === "3:53" && document.getElementById("track-duration").textContent === totalTime, "Total-duration label changed as playback advanced");
+      fixture.current.duration = 4000; fixture.position = 9; fixture.revision++; publish();
+      checkPlayerCenter();
+      check(document.getElementById("track-duration").textContent === "66:40", "Long total-duration label is incorrect");
+      fixture.current.duration = initial.current.duration; fixture.revision++; publish();
       check(document.querySelector("#player-track img") === playerImage, "Footer thumbnail was replaced on heartbeat/tab switch");
       check(document.querySelector("#current-row img") === currentImage, "Current thumbnail was replaced on heartbeat");
       check([...document.querySelectorAll("#queue-list img")].every((image, i) => image === queueImages[i]), "Queue thumbnails were replaced");
@@ -105,7 +119,7 @@
       check(!document.getElementById("now-playing").hidden, "Restart with a lower revision was ignored");
       check(document.querySelectorAll(".sound-bars i").length === 4, "Playing indicator should contain four bars");
       document.getElementById("toasts").replaceChildren();
-      results.textContent = "PASS: stable thumbnail nodes, playlist live updates, successful/rejected dragging, numbering, pause/progress, idle cleanup, bot restart";
+      results.textContent = "PASS: labels, centered controls, static total timer, stable thumbnails, live updates, drag rollback, pause/progress, idle cleanup, bot restart";
       console.log(results.textContent);
       window.scrollTo(0, 0);
     } catch (error) {

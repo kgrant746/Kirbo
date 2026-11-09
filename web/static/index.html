@@ -32,7 +32,7 @@
       <aside class="sidebar">
         <a class="brand" href="#queue" aria-label="Kirbo — open music queue"
           ><img src="/static/icon.svg" alt="" width="38" height="38" />
-          <div>Kirbo<span>POYO</span></div></a
+          <div>Kirbo<span>POYO POYO</span></div></a
         >
         <div class="creator-credit">
           <img id="creator-avatar" class="creator-avatar" src="/static/icon.svg" alt="CosmicCats’ Discord avatar" width="32" height="32" />
@@ -41,7 +41,7 @@
         <div class="nav-label">WORKSPACE</div>
         <nav aria-label="Main navigation">
           <button class="nav active" data-tab="queue">
-            <span>♫</span> Music <span class="nav-dot"></span></button>
+            <span>♫</span> Music</button>
         </nav>
         <div class="sidebar-note">
           <span class="status-dot"></span><b id="connection">Syncing…</b>
@@ -62,10 +62,7 @@
         </header>
         <div class="workspace">
           <div class="page-heading">
-            <div>
-              <span class="eyebrow">AUX CORD CRIMES</span>
-              <h1>Music</h1>
-            </div>
+            <h1>Music</h1>
           </div>
           <div class="tabs" role="tablist" aria-label="Music pages">
             <button
@@ -88,7 +85,7 @@
               aria-selected="false"
               data-tab="log"
             >
-              Log
+              Logs
             </button>
           </div>
           <section id="queue-page" role="tabpanel" aria-labelledby="tab-queue">
@@ -148,7 +145,6 @@
               <div class="section-heading">
                 <div>
                   <h2>Saved playlists</h2>
-                  <p>For when one questionable song isn’t enough.</p>
                 </div>
                 <div class="toolbar">
                   <button class="button subtle" id="import-playlist">
@@ -225,7 +221,6 @@
             <div class="section-heading">
               <div>
                 <h2>The receipts</h2>
-                <p>Who queued what. No plausible deniability.</p>
               </div>
               <span class="muted">Latest 200 events</span>
             </div>
@@ -269,12 +264,12 @@
             <div class="playback-timeline">
               <span id="elapsed">0:00</span>
               <div id="song-progress" class="song-progress" role="progressbar" aria-label="Song progress" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><div id="progress-fill"></div></div>
-              <span id="remaining">0:00</span>
+              <span id="track-duration">0:00</span>
             </div>
           </div>
           <div class="player-status">
             <span class="status-dot"></span
-            ><span id="voice-status">Not connected</span>
+            ><span id="voice-status">Not in a voice channel</span>
           </div>
         </footer>
       </main>
