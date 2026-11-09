@@ -1,3 +1,5 @@
+import asyncio
+import os
 import discord, config, music, task_manager
 from discord.ext import commands, tasks
 import command_handler
@@ -39,4 +41,20 @@ async def on_ready():
     curseforge_check.start(bot)
 
 
-bot.run(config.TOKEN)
+async def main():
+    from web.app import start
+    runner = None
+    async with bot:
+        try:
+            if os.getenv('WEB_ENABLED', 'true').lower() == 'true':
+                runner = await start(bot.music)
+            await bot.start(config.TOKEN)
+        finally:
+            if runner:
+                await runner.cleanup()
+            await bot.music.close()
+
+
+if __name__ == '__main__':
+    discord.utils.setup_logging()
+    asyncio.run(main())

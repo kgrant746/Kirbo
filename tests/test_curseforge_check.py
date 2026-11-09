@@ -2,12 +2,15 @@ import importlib.util
 import sys
 import types
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
 
 class CurseForgeCheckTests(unittest.TestCase):
     def test_stale_file_does_not_replace_newer_saved_file(self):
+        modules = patch.dict(sys.modules)
+        modules.start()
+        self.addCleanup(modules.stop)
         sys.modules["aiohttp"] = types.ModuleType("aiohttp")
         sys.modules["bs4"] = types.ModuleType("bs4")
         sys.modules["bs4"].BeautifulSoup = object
@@ -23,6 +26,7 @@ class CurseForgeCheckTests(unittest.TestCase):
         )
         checker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(checker)
+        checker.TRIGGER_MESSAGE = True
 
         class Response:
             status = 200

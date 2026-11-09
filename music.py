@@ -1,580 +1,88 @@
-from __future__ import annotations
-import asyncio
+"""Discord commands backed by the same controller as the website."""
 import random
-import re
-from collections import deque
-from typing import Dict, Deque, Tuple, Optional
-
 import discord
-from discord.ext import commands
 from discord import app_commands
-import yt_dlp
-import spotipy
-import tempfile
-
 import config
 import private
-
-from pathlib import Path
-
-PLAYLISTS_DIR = Path(getattr(config, "PLAYLISTS_DIR", Path(__file__).parent / "playlists"))
-PLAYLISTS_DIR.mkdir(parents=True, exist_ok=True)
+from music_service import MusicController
 
 
-SONG_QUEUES: Dict[str, Deque[Tuple[str, str]]] = {}
-LOADING_GUILDS: set[str] = set()
-
-async def _search_ytdlp(query: str) -> dict:
-    """Extract YouTube video/audio information using yt-dlp."""
-
-    opts = {
-        "format": "bestaudio/best",
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": False,
-    }
-
-    loop = asyncio.get_running_loop()
-
-    return await loop.run_in_executor(
-        None,
-        lambda: yt_dlp.YoutubeDL(opts).extract_info(
-            query,
-            download=False
-        )
-    )
-
-
-def _download_ytdlp(url: str, directory: str) -> str:
-    with yt_dlp.YoutubeDL({
-        "format": "bestaudio/best",
-        "noplaylist": True,
-        "outtmpl": str(Path(directory) / "%(id)s.%(ext)s"),
-    }) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
-        if not Path(filename).is_file():
-            raise FileNotFoundError(filename)
-        return filename
-
-
-def _is_spotify_playlist(s: str) -> bool:
-    s = s.strip().lower()
-    return (s.startswith("http://") or s.startswith("https://")) and "open.spotify.com/playlist" in s
-
-def _load_text_playlist(filename: str) -> list[str]:
-    name = filename.strip()
-    if not name.lower().endswith(".txt"):
-        name += ".txt"
-    p = (PLAYLISTS_DIR / name).resolve()
-    # prevent path traversal
-    if PLAYLISTS_DIR.resolve() not in p.parents:
-        raise ValueError("Invalid filename.")
-    with p.open("r", encoding="utf-8") as f:
-        lines = [ln.strip() for ln in f if ln.strip() and not ln.lstrip().startswith("#")]
-    return lines
-
-
-def setup_music(bot: commands.Bot | discord.Bot) -> None:
-    spotify = spotipy.Spotify(auth_manager=spotipy.SpotifyClientCredentials(
-        client_id=config.SPOTIFY_CLIENT_ID,
-        client_secret=config.SPOTIFY_CLIENT_SECRET
-    ))
-    
-    tree = bot.tree
+def setup_music(bot):
+    music = MusicController(bot, config)
+    bot.music = music
     guilds = [discord.Object(id=config.GUILD_ID)]
 
-
-    #-------------------------- /play --------------------------
-    @bot.tree.command(name="play", description="Play a song or add it to the queue.", guilds=guilds)
-    @app_commands.describe(song_query="Search query")
-    async def play(interaction: discord.Interaction, song_query: str):
-
-        if interaction.user.id in private.BLACKLISTED_USERS:
-            await interaction.response.send_message(private.BLACKLISTED_MESSAGE)
-            return
-
-        await interaction.response.defer()
-
-        if interaction.user.id in private.SPECIAL_USERS:
-            await interaction.followup.send(private.SPECIAL_MESSAGE)
-
-        voice_state = getattr(interaction.user, "voice", None)
-        if voice_state is None or voice_state.channel is None:
-            await interaction.followup.send("You must be in a voice channel.")
-            return
-        voice_channel = voice_state.channel
-
-        voice_client = interaction.guild.voice_client
-        if voice_client is None:
-            voice_client = await voice_channel.connect()
-        elif voice_client.channel.id != voice_channel.id:
-            await voice_client.move_to(voice_channel)
-
-        if song_query.startswith("http://") or song_query.startswith("https://"):
-            query = song_query
-        else:
-            query = f"ytsearch1:{song_query}"
-
-        print(f"[ytsearch] query={query}")
-
-        try:
-            results = await _search_ytdlp(query)
-
-        except yt_dlp.utils.DownloadError as e:
-            print(f"[ytsearch] Failed: {e}")
-
-            await interaction.followup.send(
-                "Failed to load this YouTube video. Try another link or search.",
-                ephemeral=True
-            )
-            return
-
-        if "entries" in results:
-            tracks = results.get("entries", [])
-            if not tracks:
-                await interaction.followup.send("No results found.")
-                return
-            first_track = tracks[0]
-        else:
-            first_track = results
-
-        video_url = first_track["webpage_url"]
-        title = first_track.get("title", "Untitled")
-        print(f"[ytsearch] result_title={title}")
-        print(f"[ytsearch] format={first_track.get('format_id')} protocol={first_track.get('protocol')}")
-
-        guild_id = str(interaction.guild_id)
-        if SONG_QUEUES.get(guild_id) is None:
-            SONG_QUEUES[guild_id] = deque()
-
-        SONG_QUEUES[guild_id].append((video_url, title))
-
-        if voice_client.is_playing() or voice_client.is_paused() or guild_id in LOADING_GUILDS:
-            await interaction.followup.send(f"Added to queue: **{title}**")
-        else:
-            try:
-                started = await play_next_song(voice_client, guild_id, interaction.channel, announce=False)
-            except Exception:
-                await interaction.edit_original_response(content="Could not start playback.")
-                raise
-            await interaction.edit_original_response(
-                content=f"Now playing: **{started}**" if started else f"Could not play **{title}**."
-            )
-
-    #-------------------------- /skip --------------------------
-    @bot.tree.command(name="skip", description="Skips the current playing song", guilds=guilds)
-    async def skip(interaction: discord.Interaction):
-        if interaction.guild.voice_client and (interaction.guild.voice_client.is_playing() or interaction.guild.voice_client.is_paused()):
-            interaction.guild.voice_client.stop()
-            await interaction.response.send_message("Skipped the current song.")
-        else:
-            await interaction.response.send_message("Not playing anything to skip.")
-
-    #-------------------------- /pause --------------------------
-    @bot.tree.command(name="pause", description="Pause the currently playing song.", guilds=guilds)
-    async def pause(interaction: discord.Interaction):
-        voice_client = interaction.guild.voice_client
-        
-        if voice_client is None:
-            return await interaction.response.send_message("I'm not in a voice channel.")
-        
-        if not voice_client.is_playing():
-            return await interaction.response.send_message("Nothing is currently playing.")
-        
-        voice_client.pause()
-        await interaction.response.send_message("Playback paused.")
-
-    #-------------------------- /resume --------------------------
-    @bot.tree.command(name="resume", description="Resume the currently paused song.", guilds=guilds)
-    async def resume(interaction: discord.Interaction):
-        voice_client = interaction.guild.voice_client
-        
-        if voice_client is None:
-            return await interaction.response.send_message("I'm not in a voice channel.")
-        
-        if not voice_client.is_paused():
-            return await interaction.response.send_message("I'm not paused right now.")
-        
-        voice_client.resume()
-        await interaction.response.send_message("Playback resumed.")
-
-    #-------------------------- /stop --------------------------
-    @bot.tree.command(name="stop", description="Stop playback and clear the queue.", guilds=guilds)
-    async def stop(interaction: discord.Interaction):
-        await interaction.response.defer()
-        voice_client = interaction.guild.voice_client
-
-        if not voice_client or not voice_client.is_connected():
-            await interaction.followup.send("I'm not in a voice channel.")
-            return
-        
-        guild_id_str = str(interaction.guild_id)
-        if guild_id_str in SONG_QUEUES:
-            SONG_QUEUES[guild_id_str].clear()
-
-        if voice_client.is_playing() or voice_client.is_paused():
-            voice_client.stop()
-
-        await interaction.followup.send("Stopped playback and disconnected.")
-
-        await voice_client.disconnect()
-
-    @bot.tree.command(name="queue", description="Lists out the songs currently queued to play.", guilds=guilds)
-    async def queue(interaction: discord.Interaction):
-        guild_id = str(interaction.guild_id)
-        queue = SONG_QUEUES.get(guild_id)
-
-        if not queue or len(queue) == 0:
-            await interaction.response.send_message("The song queue is currently empty.")
-            return
-
-        message_lines = []
-        for idx, (_, title) in enumerate(queue):
-            message_lines.append(f"{idx + 1}. {title}")
-
-        message = "\n".join(message_lines)
-        if len(message) > 2000:
-            with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".txt") as temp_file:
-                temp_file.write(message)
-                temp_file_path = temp_file.name
-            await interaction.response.send_message("The queue is too long to display here. See the attached file.", file=discord.File(temp_file_path))
-        else:
-            await interaction.response.send_message(f"Current Song Queue:\n{message}") 
-
-    @bot.tree.command(name="nowplaying", description="Gets the currently playing song.", guilds=guilds)
-    async def nowplaying(interaction: discord.Interaction):
-        voice_client = interaction.guild.voice_client
-
-        if voice_client is None or not (voice_client.is_playing() or voice_client.is_paused()):
-            await interaction.response.send_message("No song is currently playing.")
-            return
-
-        current_song = getattr(voice_client.source, "title", None)
-
-        if current_song:
-            await interaction.response.send_message(f"Currently playing: **{current_song}**")
-        else:
-            await interaction.response.send_message("Currently playing a song, but the title is unknown.")
-
-
-    @bot.tree.command(name="playnext", description="Insert a song to play next (requires something already playing and a non-empty queue).", guilds=guilds)
-    @app_commands.describe(song_query="Search query or URL to play next")
-    async def playnext(interaction: discord.Interaction, song_query: str):
-        # optional: match your /play gates
+    async def allowed(interaction):
         if interaction.user.id in private.BLACKLISTED_USERS:
             await interaction.response.send_message(private.BLACKLISTED_MESSAGE, ephemeral=True)
-            return
+            return False
+        return True
 
+    async def add_song(interaction, query, next_up=False):
+        if not await allowed(interaction):
+            return
         await interaction.response.defer()
-
-        vc = interaction.guild.voice_client
-        if vc is None or not (vc.is_playing() or vc.is_paused()):
-            await interaction.followup.send("Nothing is currently playing. Use /play instead.", ephemeral=True)
-            return
-
-        guild_id = str(interaction.guild_id)
-        q = SONG_QUEUES.get(guild_id)
-
-        # Per your requirement: only works if there is currently stuff in the queue
-        if not q or len(q) == 0:
-            await interaction.followup.send("The queue is empty. Use /play to start the queue, then /playnext to insert the next track.", ephemeral=True)
-            return
-
-        # Build query like /play
-        query = song_query if song_query.startswith(("http://", "https://")) else f"ytsearch1:{song_query}"
-
         try:
-            print(f"[ytsearch] query={query}")
-            results = await _search_ytdlp(query)
-        except Exception:
-            await interaction.followup.send("Search failed for that query.", ephemeral=True)
-            return
+            row = await music.add(query, interaction.user, interaction.user.name, next_up)
+            await interaction.edit_original_response(content=f"{'Will play next' if next_up else 'Added to queue'}: **{row['title']}**")
+        except Exception as error:
+            await interaction.edit_original_response(content=str(error)[:1800])
 
-        if "entries" in results:
-            entries = results.get("entries") or []
-            if not entries:
-                await interaction.followup.send("No results found.", ephemeral=True)
+    @bot.tree.command(name='play', description='Play a song or add it to the queue.', guilds=guilds)
+    @app_commands.describe(song_query='YouTube URL or song search')
+    async def play(interaction: discord.Interaction, song_query: str):
+        await add_song(interaction, song_query)
+
+    @bot.tree.command(name='playnext', description='Insert a song at the front of the waiting queue.', guilds=guilds)
+    async def playnext(interaction: discord.Interaction, song_query: str):
+        await add_song(interaction, song_query, True)
+
+    def register_control(action, description):
+        @bot.tree.command(name=action, description=description, guilds=guilds)
+        async def command(interaction: discord.Interaction):
+            if not await allowed(interaction):
                 return
-            first = entries[0]
-        else:
-            first = results
+            await interaction.response.defer()
+            try:
+                await music.control(action, interaction.user.name, interaction.user)
+                await interaction.edit_original_response(content={'pause': 'Playback paused.', 'resume': 'Playback resumed.', 'skip': 'Skipped the current song.', 'stop': 'Stopped playback and disconnected.'}[action])
+            except Exception as error:
+                await interaction.edit_original_response(content=str(error)[:1800])
+    for action, description in [('pause', 'Pause playback.'), ('resume', 'Resume playback.'), ('skip', 'Skip the current song.'), ('stop', 'Stop playback and clear the queue.')]:
+        register_control(action, description)
 
-        video_url = first["webpage_url"]
-        title = first.get("title", "Untitled")
-        print(f"[ytsearch] result_title={title}")
+    @bot.tree.command(name='queue', description='List songs waiting to play.', guilds=guilds)
+    async def queue(interaction: discord.Interaction):
+        rows = [f"{i + 1}. {row['title']}" for i, row in enumerate(music.queue)]
+        content = '\n'.join(rows) or 'The song queue is currently empty.'
+        if len(content) > 1900:
+            content = content[:1800] + '\n… Open the Kirbo website to view the full queue.'
+        await interaction.response.send_message(content)
 
-        # Insert at the front so it becomes the very next song
-        q.appendleft((video_url, title))
+    @bot.tree.command(name='nowplaying', description='Show the track currently playing.', guilds=guilds)
+    async def nowplaying(interaction: discord.Interaction):
+        row = music.current
+        content = f"{'Loading' if music.loading else 'Currently playing'}: **{row['title']}**" if row else 'No song is currently playing.'
+        await interaction.response.send_message(content)
 
-        await interaction.followup.send(f"Will play next: **{title}**")
-
-
-    @bot.tree.command(
-        name="playlist",
-        description="Queue a Spotify playlist URL or a saved .txt file of queries.",
-        guilds=guilds
-    )
-    @app_commands.describe(
-        source="Spotify playlist URL or a saved text filename in the playlists folder",
-        shuffle="Whether to randomize track order"
-    )
+    @bot.tree.command(name='playlist', description='Queue a Spotify playlist URL or a saved playlist name.', guilds=guilds)
     async def playlist(interaction: discord.Interaction, source: str, shuffle: bool = False):
+        if not await allowed(interaction):
+            return
         await interaction.response.defer()
-
-        # Voice checks
-        vc_state = getattr(interaction.user, "voice", None)
-        if not vc_state or not vc_state.channel:
-            return await interaction.followup.send("You must be in a voice channel.")
-        voice_channel = vc_state.channel
-
-        voice_client = interaction.guild.voice_client or await voice_channel.connect()
-        if voice_client.channel.id != voice_channel.id:
-            await voice_client.move_to(voice_channel)
-
-        guild_id = str(interaction.guild_id)
-        if guild_id not in SONG_QUEUES:
-            SONG_QUEUES[guild_id] = deque()
-
-        # Mode A: Spotify playlist URL
-        if _is_spotify_playlist(source):
-            try:
-                raw_id = source.rstrip("/").split("/")[-1]
-                playlist_id = raw_id.split("?")[0]
-            except Exception:
-                return await interaction.followup.send("Couldn't parse a playlist ID from that URL.", ephemeral=True)
-
-            items: list[tuple[str, str]] = []
-            # fetch first page
-            results = spotify.playlist_items(
-                playlist_id,
-                fields="items.track(name,artists(name)),next",
-                additional_types=["track"]
-            )
-            def _collect(page):
-                for it in page.get("items", []):
-                    t = it.get("track")
-                    if t and t.get("name"):
-                        artists = ", ".join(a["name"] for a in t.get("artists", []))
-                        items.append((t["name"], artists))
-
-            _collect(results)
-            # optional: follow pagination if you want full lists in the future
-            # next_url = results.get("next")
-            # while next_url:
-            #     page = spotify.next(results)
-            #     results = page
-            #     _collect(results)
-            if not items:
-                return await interaction.followup.send("No tracks found in that playlist.", ephemeral=True)
-
-            if shuffle:
-                random.shuffle(items)
-
-            # Enqueue first immediately
-            first_name, first_artists = items.pop(0)
-            first_query = f"ytsearch1:{first_name} {first_artists}"
-            try:
-                first_info = await _search_ytdlp(first_query)
-                first_entry = first_info["entries"][0] if "entries" in first_info else first_info
-            except Exception:
-                return await interaction.followup.send("Failed to enqueue the first track.", ephemeral=True)
-
-            SONG_QUEUES[guild_id].append((first_entry["webpage_url"], first_entry.get("title", first_name)))
-
-            if not (voice_client.is_playing() or voice_client.is_paused() or guild_id in LOADING_GUILDS):
-                await interaction.followup.send(f"Loading: **{first_entry.get('title', first_name)}**")
-                await play_next_song(voice_client, guild_id, interaction.channel)
+        try:
+            if source.startswith('https://open.spotify.com/'):
+                rows = await music.spotify_rows(source)
             else:
-                await interaction.followup.send(f"Added **{first_entry.get('title', first_name)}** to the queue.")
-
-            async def enqueue_rest_spotify():
-                count = 1
-                for name, artists in items:
-                    q = f"ytsearch1:{name} {artists}"
-                    try:
-                        info = await _search_ytdlp(q)
-                        entry = info["entries"][0] if "entries" in info else info
-                    except Exception:
-                        continue
-                    SONG_QUEUES[guild_id].append((entry["webpage_url"], entry.get("title", name)))
-                    count += 1
-                await interaction.channel.send(f"Queued **{count}** tracks.")
-            asyncio.create_task(enqueue_rest_spotify())
-            return
-
-        # Mode B: text filename playlist
-        try:
-            lines = _load_text_playlist(source)
-        except FileNotFoundError:
-            return await interaction.followup.send("Text playlist not found.", ephemeral=True)
-        except ValueError:
-            return await interaction.followup.send("Invalid filename.", ephemeral=True)
-        except Exception:
-            return await interaction.followup.send("Failed to read that text playlist.", ephemeral=True)
-
-        if not lines:
-            return await interaction.followup.send("That text playlist is empty.", ephemeral=True)
-
-        if shuffle:
-            random.shuffle(lines)
-
-        # Enqueue first line immediately
-        first_line = lines.pop(0)
-        if first_line.startswith("http://") or first_line.startswith("https://"):
-            first_query = first_line
-        else:
-            first_query = f"ytsearch1:{first_line}"
-        try:
-            first_info = await _search_ytdlp(first_query)
-            first_entry = first_info["entries"][0] if "entries" in first_info else first_info
-        except Exception:
-            return await interaction.followup.send("Failed to enqueue the first line from the file.", ephemeral=True)
-
-        SONG_QUEUES[guild_id].append((first_entry["webpage_url"], first_entry.get("title", first_line)))
-
-        if not (voice_client.is_playing() or voice_client.is_paused() or guild_id in LOADING_GUILDS):
-            await interaction.followup.send(f"Loading: **{first_entry.get('title', first_line)}**")
-            await play_next_song(voice_client, guild_id, interaction.channel)
-        else:
-            await interaction.followup.send(f"Added **{first_entry.get('title', first_line)}** to the queue.")
-
-        async def enqueue_rest_file():
-            count = 1
-            for line in lines:
-                q = line if (line.startswith("http://") or line.startswith("https://")) else f"ytsearch1:{line}"
-                try:
-                    info = await _search_ytdlp(q)
-                    entry = info["entries"][0] if "entries" in info else info
-                except Exception:
-                    continue
-                SONG_QUEUES[guild_id].append((entry["webpage_url"], entry.get("title", line)))
-                count += 1
-            await interaction.channel.send(f"Queued **{count}** tracks.")
-        asyncio.create_task(enqueue_rest_file())
-
-
-    #-------------------------- helper functions --------------------------
-    async def play_next_song(voice_client, guild_id, channel, announce=True):
-        if guild_id in LOADING_GUILDS:
-            return
-        LOADING_GUILDS.add(guild_id)
-        try:
-            while SONG_QUEUES[guild_id] and voice_client.is_connected():
-                video_url, title = SONG_QUEUES[guild_id].popleft()
-                track_dir = tempfile.TemporaryDirectory()
-                try:
-                    audio_file = await asyncio.to_thread(_download_ytdlp, video_url, track_dir.name)
-                except Exception as error:
-                    track_dir.cleanup()
-                    print(f"[yt-dlp] Failed to download {title}: {error}")
-                    if announce:
-                        await channel.send(f"Could not load **{title}**; skipping it.")
-                    continue
-
-                if not voice_client.is_connected():
-                    track_dir.cleanup()
-                    return
-
-                stderr_log = tempfile.TemporaryFile()
-                try:
-                    source = discord.FFmpegOpusAudio(
-                        audio_file, options="-vn -c:a libopus -b:a 96k",
-                        executable=config.FFMPEG_PATH, stderr=stderr_log
-                    )
-                    source.title = title
-                except Exception:
-                    stderr_log.close()
-                    track_dir.cleanup()
-                    raise
-
-                def after_play(error):
-                    stderr_log.seek(0)
-                    ffmpeg_stderr = stderr_log.read().decode("utf-8", errors="replace")
-                    stderr_log.close()
-                    track_dir.cleanup()
-                    exit_code = source._process.poll()
-                    detail = re.sub(r"https?://\S+", "[stream URL]", ffmpeg_stderr)[-4000:]
-                    print(f"[ffmpeg] exit={exit_code} stderr={detail or '<empty>'}")
-                    if error:
-                        print(f"Error playing {title}: {error}")
-                    asyncio.run_coroutine_threadsafe(
-                        play_next_song(voice_client, guild_id, channel), bot.loop
-                    )
-
-                try:
-                    voice_client.play(source, after=after_play)
-                except Exception:
-                    stderr_log.close()
-                    source.cleanup()
-                    track_dir.cleanup()
-                    raise
-
-                if announce:
-                    asyncio.create_task(channel.send(f"Now playing: **{title}**"))
-                return title
-        finally:
-            LOADING_GUILDS.discard(guild_id)
-
-
-    #-------------------------- voice join troll --------------------------
-    # @bot.listen("on_voice_state_update")
-    # async def voice_join_troll(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    #     if member.bot:
-    #         return
-
-    #     if member.id != config.TROLL_USER_ID:
-    #         return
-
-    #     # Only trigger when they newly join a voice channel, not when muting/deafening/etc.
-    #     if before.channel is not None or after.channel is None:
-    #         return
-
-    #     text_channel = bot.get_channel(config.TROLL_TEXT_CHANNEL_ID)
-    #     if text_channel:
-    #         await text_channel.send("STAND READY FOR HIS ARRIVAL")
-
-    #     voice_channel = after.channel
-    #     voice_client = member.guild.voice_client
-
-    #     if voice_client is None:
-    #         voice_client = await voice_channel.connect()
-    #     elif voice_client.channel.id != voice_channel.id:
-    #         voice_client = await voice_client.move_to(voice_channel)
-
-    #     query = config.TROLL_YOUTUBE_URL
-
-    #     try:
-    #         print(f"[trollplay] query={query}")
-    #         results = await _search_ytdlp(query)
-    #     except Exception as e:
-    #         print(f"[trollplay] search failed: {e}")
-    #         if text_channel:
-    #             await text_channel.send("Troll song failed to load.")
-    #         return
-
-    #     if "entries" in results:
-    #         tracks = results.get("entries", [])
-    #         if not tracks:
-    #             return
-    #         first_track = tracks[0]
-    #     else:
-    #         first_track = results
-
-    #     audio_url = first_track["url"]
-    #     title = first_track.get("title", "Untitled")
-    #     print(f"[trollplay] result_title={title}")
-
-    #     guild_id = str(member.guild.id)
-    #     if SONG_QUEUES.get(guild_id) is None:
-    #         SONG_QUEUES[guild_id] = deque()
-
-    #     SONG_QUEUES[guild_id].append((audio_url, title))
-
-    #     if not (voice_client.is_playing() or voice_client.is_paused()):
-    #         if text_channel:
-    #             await text_channel.send(f"Now playing: **{title}**")
-    #         await play_next_song(voice_client, guild_id, text_channel or voice_channel, post_now_playing=False)
-
-
-
+                saved = music.store.playlist(source)
+                if not saved:
+                    raise ValueError('Playlist not found. Use the website to create or import it.')
+                rows = saved['tracks']
+            if not rows:
+                raise ValueError('That playlist is empty.')
+            await music.enqueue_playlist(rows, interaction.user, interaction.user.name, shuffle)
+            music.changed(interaction.user.name, f'queued playlist {source}')
+            await interaction.edit_original_response(content=f'Adding **{len(rows)}** playlist songs to the queue.')
+        except Exception as error:
+            await interaction.edit_original_response(content=str(error)[:1800])
+    return music
