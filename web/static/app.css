@@ -70,12 +70,12 @@ a {
 }
 .muted {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 .eyebrow {
   display: block;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 2px;
 }
@@ -110,7 +110,7 @@ p {
   border-radius: 7px;
   min-height: 38px;
   padding: 10px 15px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 650;
   transition:
     background 0.15s,
@@ -176,7 +176,7 @@ p {
 }
 .brand span {
   display: block;
-  font-size: 7px;
+  font-size: 9px;
   letter-spacing: 1.4px;
   color: var(--muted);
   margin-top: 3px;
@@ -188,13 +188,13 @@ p {
   padding: 15px 6px;
   border-top: 1px solid #292a32;
   border-bottom: 1px solid #292a32;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
 }
 .creator-credit small {
   display: block;
   color: #77798c;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 400;
   margin-bottom: 4px;
 }
@@ -207,10 +207,10 @@ p {
   width: 32px;
   height: 32px;
   border-radius: 9px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .nav-label {
-  font-size: 8px;
+  font-size: 10px;
   color: #707284;
   font-weight: 700;
   letter-spacing: 1.7px;
@@ -224,7 +224,7 @@ p {
   background: none;
   border-radius: 6px;
   padding: 13px 12px;
-  font-size: 12px;
+  font-size: 14px;
   text-align: left;
   color: #9698aa;
   margin-bottom: 5px;
@@ -247,7 +247,7 @@ p {
   padding: 16px 10px;
   border-bottom: 1px solid #292a32;
   color: #c2c4d0;
-  font-size: 10px;
+  font-size: 12px;
 }
 .sidebar-note b {
   font-weight: 500;
@@ -261,7 +261,7 @@ p {
   font-size: 17px;
 }
 .logout span {
-  font-size: 11px;
+  font-size: 13px;
   margin-left: 10px;
 }
 main {
@@ -278,7 +278,7 @@ main {
   padding: 0 44px;
 }
 .breadcrumb {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 650;
   letter-spacing: 1.6px;
   color: #8b8d9f;
@@ -291,7 +291,7 @@ main {
   display: flex;
   gap: 10px;
   align-items: center;
-  font-size: 11px;
+  font-size: 13px;
   color: #b1b3c2;
 }
 .user img {
@@ -324,7 +324,7 @@ main {
   background: none;
   padding: 0 0 15px;
   color: #9395a6;
-  font-size: 12px;
+  font-size: 14px;
 }
 .tabs button[aria-selected="true"] {
   color: var(--text);
@@ -340,7 +340,7 @@ main {
   border-radius: 3px;
 }
 .tabs span {
-  font-size: 9px;
+  font-size: 11px;
   background: #40313b;
   color: #efbfd8;
   border-radius: 4px;
@@ -365,7 +365,7 @@ main {
   border: 0;
   flex: 1;
   padding: 9px 0;
-  font-size: 12px;
+  font-size: 14px;
 }
 .search-box:focus-within {
   border-color: #bd739b;
@@ -375,7 +375,7 @@ main {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: 12px;
   color: #a6a8ba;
   white-space: nowrap;
 }
@@ -393,11 +393,11 @@ main {
   margin: 28px 0 22px;
 }
 .section-heading p {
-  font-size: 11px;
+  font-size: 13px;
   margin-top: 7px;
 }
 .section-heading h2 span {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 400;
   margin-left: 10px;
 }
@@ -410,7 +410,7 @@ main {
 }
 .table-head {
   color: #7e8093;
-  font-size: 8px;
+  font-size: 10px;
   letter-spacing: 1.3px;
   padding: 0 13px 12px;
   border-bottom: 1px solid var(--line);
@@ -480,7 +480,7 @@ main {
 .pause-glyph { fill: none; stroke: currentColor; stroke-width: 3; }
 .track-number {
   color: #7c7e91;
-  font-size: 11px;
+  font-size: 13px;
   cursor: grab;
 }
 .track-info {
@@ -508,7 +508,7 @@ main {
   min-width: 0;
 }
 .track-title {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: #e4e4ee;
   white-space: nowrap;
@@ -518,7 +518,7 @@ main {
 }
 .track-artist {
   color: #8f91a4;
-  font-size: 10px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -526,7 +526,7 @@ main {
 }
 .track-by {
   color: #8f91a4;
-  font-size: 10px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -535,7 +535,7 @@ main {
   font-variant-numeric: tabular-nums;
   color: #a3a5b6;
   text-align: right;
-  font-size: 11px;
+  font-size: 13px;
 }
 .row-delete {
   opacity: 0;
@@ -567,7 +567,7 @@ main {
 }
 .track-row .row-add {
   color: var(--accent);
-  font-size: 10px;
+  font-size: 12px;
   background: #42303b;
   border-radius: 5px;
   padding: 5px 8px;
@@ -592,7 +592,7 @@ main {
   font-size: 14px;
 }
 .empty p {
-  font-size: 11px;
+  font-size: 13px;
   margin: 9px auto;
   max-width: 330px;
 }
@@ -622,7 +622,7 @@ main {
 }
 .player-track b {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   max-width: 330px;
   overflow: hidden;
@@ -631,7 +631,7 @@ main {
 }
 .player-track small {
   display: block;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--muted);
   margin-top: 5px;
   white-space: nowrap;
@@ -648,7 +648,7 @@ main {
   justify-content: center;
 }
 .player-center { min-width: 0; width: 100%; max-width: 570px; justify-self: center; }
-.playback-timeline { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 9px; align-items: center; margin-top: 9px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.playback-timeline { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 9px; align-items: center; margin-top: 9px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .playback-timeline > span:last-child { text-align: right; }
 .song-progress { height: 4px; overflow: hidden; border-radius: 4px; background: #51515d; }
 #progress-fill { height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width 0.25s linear; }
@@ -677,7 +677,7 @@ main {
   color: white;
 }
 .player-status {
-  font-size: 10px;
+  font-size: 12px;
   color: #9396a7;
   display: flex;
   gap: 8px;
@@ -733,13 +733,13 @@ main {
   text-overflow: ellipsis;
 }
 .playlist-card p {
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 7px;
 }
 .back {
   color: #dca7c2;
   background: none;
-  font-size: 11px;
+  font-size: 13px;
   padding: 0;
   margin-bottom: 25px;
 }
@@ -773,7 +773,7 @@ main {
   gap: 10px;
   color: #fff;
   background: #101116b8;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 650;
   opacity: 0;
   transition: opacity 0.15s;
@@ -801,7 +801,7 @@ main {
   letter-spacing: -0.8px;
 }
 .playlist-hero p {
-  font-size: 11px;
+  font-size: 13px;
   margin-bottom: 15px;
 }
 .playlist-hint {
@@ -834,7 +834,7 @@ main {
 }
 .activity-copy {
   flex: 1;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.7;
 }
 .activity-copy b {
@@ -843,7 +843,7 @@ main {
 }
 .activity-row time {
   color: #818497;
-  font-size: 10px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .login-screen {
@@ -926,7 +926,7 @@ main {
   max-width: 400px;
   padding: 13px 17px;
   border-radius: 9px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
 }
 .toast.success {
@@ -960,7 +960,7 @@ dialog::backdrop {
   display: grid;
   gap: 9px;
   margin-bottom: 18px;
-  font-size: 12px;
+  font-size: 14px;
   color: #b9bac9;
 }
 .field input {
@@ -968,7 +968,7 @@ dialog::backdrop {
 }
 .field small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 .modal-actions {
   display: flex;
@@ -993,7 +993,7 @@ dialog::backdrop {
   background: none;
   padding: 10px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 14px;
 }
 #context-menu button:hover {
   background: #603d50;
@@ -1001,7 +1001,7 @@ dialog::backdrop {
 #login-error {
   color: var(--red);
   margin-top: 16px;
-  font-size: 12px;
+  font-size: 14px;
 }
 #login-error:empty {
   display: none;
@@ -1086,14 +1086,14 @@ dialog::backdrop {
     padding: 0 18px;
   }
   .breadcrumb {
-    font-size: 7px;
+    font-size: 9px;
     letter-spacing: 0.5px;
   }
   .breadcrumb span {
     margin: 0 5px;
   }
   .user {
-    font-size: 10px;
+    font-size: 12px;
   }
   .user img {
     width: 25px;
@@ -1106,7 +1106,7 @@ dialog::backdrop {
     font-size: 34px;
   }
   .eyebrow {
-    font-size: 8px;
+    font-size: 10px;
     letter-spacing: 1.4px;
   }
   .tabs {
@@ -1119,7 +1119,7 @@ dialog::backdrop {
   }
   .search-box > input {
     flex-basis: 65%;
-    font-size: 11px;
+    font-size: 13px;
   }
   .search-box > span {
     display: none;
@@ -1155,10 +1155,10 @@ dialog::backdrop {
     gap: 8px;
   }
   .track-title {
-    font-size: 11px;
+    font-size: 13px;
   }
   .track-artist {
-    font-size: 9px;
+    font-size: 11px;
   }
   .row-delete {
     opacity: 1;
@@ -1180,10 +1180,10 @@ dialog::backdrop {
   }
   .player-track b {
     max-width: 150px;
-    font-size: 10px;
+    font-size: 12px;
   }
   .player-track small {
-    font-size: 8px;
+    font-size: 10px;
   }
   .player-controls {
     gap: 9px;
@@ -1207,7 +1207,7 @@ dialog::backdrop {
   }
   .choose-photo {
     gap: 5px;
-    font-size: 10px;
+    font-size: 12px;
   }
   .choose-photo svg {
     width: 24px;
@@ -1233,7 +1233,7 @@ dialog::backdrop {
     flex-wrap: wrap;
   }
   .activity-copy {
-    font-size: 11px;
+    font-size: 13px;
   }
   .activity-row time {
     margin-left: 42px;
