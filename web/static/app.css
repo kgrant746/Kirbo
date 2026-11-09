@@ -465,6 +465,15 @@ main {
   color: #f3c1da;
   border: 1px solid #4b3441;
 }
+.now-playing {
+  margin-top: 28px;
+}
+.now-playing h2 {
+  margin-bottom: 14px;
+}
+.now-playing .track-row.current {
+  margin: 0;
+}
 .track-number {
   color: #7c7e91;
   font-size: 11px;
@@ -679,7 +688,6 @@ main {
   aspect-ratio: 1;
   border-radius: 7px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
   overflow: hidden;
   background: linear-gradient(130deg, #604353, #332d35);
   margin-bottom: 16px;
@@ -688,14 +696,15 @@ main {
   text-align: center;
   color: #e8afcc;
 }
-.art img {
+.playlist-cover {
   width: 100%;
   height: 100%;
   object-fit: cover;
   aspect-ratio: 1;
 }
-.art > span {
-  grid-column: span 2;
+.playlist-cover.placeholder {
+  display: grid;
+  place-items: center;
 }
 .playlist-card h3 {
   font-size: 13px;
@@ -721,6 +730,9 @@ main {
   margin-bottom: 30px;
 }
 .playlist-art {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
   width: 135px;
   height: 135px;
   border-radius: 12px;
@@ -730,6 +742,38 @@ main {
   font-size: 55px;
   color: #e8accb;
   flex-shrink: 0;
+}
+.choose-photo {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #fff;
+  background: #101116b8;
+  font-size: 12px;
+  font-weight: 650;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.choose-photo svg {
+  width: 35px;
+  height: 35px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.playlist-art:hover .choose-photo,
+.playlist-art:focus-visible .choose-photo,
+.playlist-art[aria-busy] .choose-photo {
+  opacity: 1;
+}
+@media (hover: none) {
+  .choose-photo { opacity: 1; }
 }
 .playlist-hero h2 {
   font-size: 30px;
@@ -1154,6 +1198,14 @@ dialog::backdrop {
     width: 70px;
     height: 70px;
     font-size: 34px;
+  }
+  .choose-photo {
+    gap: 5px;
+    font-size: 10px;
+  }
+  .choose-photo svg {
+    width: 24px;
+    height: 24px;
   }
   .playlist-hero h2 {
     font-size: 22px;

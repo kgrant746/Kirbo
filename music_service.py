@@ -45,6 +45,7 @@ def track(query, title=None, duration=None, thumbnail=None):
 class Store:
     def __init__(self, path=ROOT / "data" / "controller.sqlite3", playlists=ROOT / "playlists"):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.covers = Path(path).parent / 'playlist-covers'
         self.db = sqlite3.connect(path)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
@@ -53,6 +54,9 @@ class Store:
             CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, payload TEXT, expires REAL);
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
         """)
+        if 'cover' not in {row[1] for row in self.db.execute('PRAGMA table_info(playlists)')}:
+            self.db.execute('ALTER TABLE playlists ADD COLUMN cover TEXT')
+            self.db.commit()
         if not self.db.execute("SELECT 1 FROM settings WHERE key='txt_imported'").fetchone():
             for file in sorted(Path(playlists).glob("*.txt")):
                 rows = []
@@ -67,8 +71,8 @@ class Store:
             self.db.commit()
 
     def playlists(self):
-        return [dict(id=r[0], name=r[1], tracks=json.loads(r[2]), revision=r[3])
-                for r in self.db.execute("SELECT * FROM playlists ORDER BY name COLLATE NOCASE")]
+        return [dict(id=r[0], name=r[1], tracks=json.loads(r[2]), revision=r[3], cover=r[4])
+                for r in self.db.execute("SELECT id,name,tracks,revision,cover FROM playlists ORDER BY name COLLATE NOCASE")]
 
     def playlist(self, ident):
         return next((p for p in self.playlists() if p['id'] == ident or p['name'].casefold() == ident.removesuffix('.txt').casefold()), None)
@@ -93,9 +97,24 @@ class Store:
             ids.add(row['id'])
             row['artist'] = str(item.get('artist', ''))[:200]
             clean.append(row)
-        self.db.execute("INSERT OR REPLACE INTO playlists VALUES(?,?,?,?)", (ident, name, json.dumps(clean), (old['revision'] + 1) if old else 1))
+        self.db.execute("INSERT OR REPLACE INTO playlists(id,name,tracks,revision,cover) VALUES(?,?,?,?,?)",
+                        (ident, name, json.dumps(clean), (old['revision'] + 1) if old else 1, old['cover'] if old else None))
         self.db.commit()
         return self.playlist(ident)
+
+    def merge_metadata(self, ident, original, resolved):
+        playlist = self.playlist(ident)
+        if not playlist:
+            return False
+        row = next((r for r in playlist['tracks'] if r['id'] == original['id']), None)
+        if not row or row['query'] != original['query'] or row.get('thumbnail'):
+            return False
+        for key in ('thumbnail', 'duration', 'artist'):
+            row[key] = resolved.get(key)
+        if row['title'] == row['query']:
+            row['title'] = resolved['title']
+        self.save_playlist(ident, playlist['name'], playlist['tracks'], playlist['revision'])
+        return True
 
     def activity(self, actor, message):
         self.db.execute("INSERT INTO activity(at,actor,message) VALUES(?,?,?)", (time.time(), actor, message))
@@ -174,6 +193,23 @@ class MusicController:
                 return row
         async with self.search_slots:
             return await asyncio.to_thread(extract)
+
+    async def enrich_playlists(self):
+        # Old text playlists have queries only; publish each result without blocking the UI.
+        resolved_queries = {}
+        for playlist in self.store.playlists():
+            for row in playlist['tracks']:
+                if row.get('thumbnail'):
+                    continue
+                try:
+                    if row['query'] not in resolved_queries:
+                        resolved_queries[row['query']] = None
+                        resolved_queries[row['query']] = await self.resolve(row['query'])
+                    resolved = resolved_queries[row['query']]
+                    if resolved and self.store.merge_metadata(playlist['id'], row, resolved):
+                        self.changed()
+                except Exception:
+                    log.warning('Could not retrieve artwork for a song in playlist %s', playlist['id'])
 
     async def add(self, query, member, actor, next_up=False):
         await self.connect(member)

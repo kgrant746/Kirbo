@@ -112,6 +112,10 @@
                 ><input type="checkbox" id="next-up" />Play next</label
               ><button class="button primary" type="submit">＋ Add song</button>
             </form>
+            <section id="now-playing" class="now-playing" aria-labelledby="now-playing-title" hidden>
+              <h2 id="now-playing-title">Now playing</h2>
+              <div id="current-row"></div>
+            </section>
             <div class="section-heading">
               <div>
                 <h2>Up next <span id="total-duration" class="muted"></span></h2>
@@ -131,7 +135,6 @@
               <span>#</span><span>TRACK</span><span>ADDED BY</span><span>◷</span
               ><span></span>
             </div>
-            <div id="current-row"></div>
             <div
               id="queue-list"
               class="track-list"
@@ -139,7 +142,7 @@
             ></div>
             <div id="queue-empty" class="empty">
               <div class="empty-icon">♫</div>
-              <h3>Your next favorite song goes here.</h3>
+              <h3>Nothing in the queue.</h3>
               <p>
                 Search above to add a track. Join a Discord voice channel to get
                 started.
@@ -160,7 +163,7 @@
                 </div>
                 <div class="toolbar">
                   <button class="button subtle" id="import-playlist">
-                    Import Spotify</button
+                    Import from Spotify</button
                   ><button class="button primary" id="new-playlist">
                     ＋ New playlist
                   </button>
@@ -170,7 +173,7 @@
                 <input
                   id="spotify-direct"
                   type="url"
-                  placeholder="Paste a Spotify playlist link to queue it without saving"
+                  placeholder="Paste a public Spotify playlist link to queue it without saving"
                   aria-label="Spotify playlist URL"
                   required
                 /><button class="button subtle">Queue link</button>
@@ -185,7 +188,8 @@
             <div id="playlist-detail" hidden>
               <button id="back-library" class="back">← All playlists</button>
               <div class="playlist-hero">
-                <div id="playlist-art" class="playlist-art">♫</div>
+                <button id="playlist-art" class="playlist-art" type="button" aria-label="Choose playlist photo" title="Choose photo (JPG, PNG or WebP, up to 5 MB)">♫</button>
+                <input id="playlist-photo" type="file" accept="image/jpeg,image/png,image/webp" hidden>
                 <div>
                   <span class="eyebrow">SHARED PLAYLIST</span>
                   <h2 id="playlist-title"></h2>

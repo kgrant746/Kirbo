@@ -25,7 +25,8 @@ const duration = (n) =>
     : "—";
 function image(url, cls = "cover") {
   try {
-    if (url && new URL(url).protocol === "https:")
+    const parsed = new URL(url, location.origin);
+    if (url && (parsed.protocol === "https:" || (parsed.origin === location.origin && parsed.pathname.startsWith("/api/playlists/"))))
       return `<img class="${cls}" src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
   } catch {}
   return `<div class="${cls} placeholder">♫</div>`;
@@ -45,10 +46,10 @@ async function request(path, data) {
       : {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type": data instanceof Blob ? data.type || "application/octet-stream" : "application/json",
             "X-CSRF-Token": me?.csrf || "",
           },
-          body: JSON.stringify(data),
+          body: data instanceof Blob ? data : JSON.stringify(data),
         },
   );
   const result = await response.json();
@@ -116,7 +117,7 @@ function rowHTML(row, index, playlist = false, current = false) {
 function render() {
   $("queue-count").textContent = state.queue.length;
   $("total-duration").textContent =
-    `${state.queue.length} songs · ${duration(state.queue.reduce((s, r) => s + (Number(r.duration) || 0), 0))}`;
+    `${state.queue.length} ${state.queue.length === 1 ? "song" : "songs"} · ${duration(state.queue.reduce((s, r) => s + (Number(r.duration) || 0), 0))}`;
   const qsig = JSON.stringify(state.queue);
   if (activeTab === "queue" && qsig !== queueSignature) {
     renderRows("queue-list", state.queue, false);
@@ -125,6 +126,7 @@ function render() {
   $("current-row").innerHTML = state.current
     ? rowHTML(state.current, 0, false, true)
     : "";
+  $("now-playing").hidden = !state.current;
   $("queue-empty").hidden = Boolean(state.queue.length || state.current);
   const current = state.current;
   $("player-track").innerHTML = current
@@ -364,12 +366,14 @@ document.addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") $("context-menu").hidden = true;
 });
+function playlistArt(p) {
+  return image(p.cover ? `/api/playlists/${encodeURIComponent(p.id)}/cover?v=${encodeURIComponent(p.cover)}` : p.tracks[0]?.thumbnail, "playlist-cover");
+}
 function renderLibrary() {
   $("library-empty").hidden = Boolean(state.playlists.length);
   $("playlist-grid").innerHTML = state.playlists
     .map((p) => {
-      const images = p.tracks.filter((r) => r.thumbnail).slice(0, 4);
-      return `<button class="playlist-card" data-playlist="${esc(p.id)}"><div class="art">${images.length === 4 ? images.map((r) => image(r.thumbnail, "")).join("") : "<span>♫</span>"}</div><h3>${esc(p.name)}</h3><p>${p.tracks.length} songs · Shared playlist</p></button>`;
+      return `<button class="playlist-card" data-playlist="${esc(p.id)}"><div class="art">${playlistArt(p)}</div><h3>${esc(p.name)}</h3><p>${p.tracks.length} songs · Shared playlist</p></button>`;
     })
     .join("");
   $("playlist-grid")
@@ -389,10 +393,33 @@ function renderLibrary() {
     $("playlist-title").textContent = p.name;
     $("playlist-meta").textContent =
       `${p.tracks.length} songs · Everyone can contribute`;
-    $("playlist-art").textContent = p.name.slice(0, 1).toUpperCase();
+    $("playlist-art").innerHTML = `${playlistArt(p)}<span class="choose-photo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6zM14 5l5 5"/></svg><span>Choose photo</span></span>`;
     renderRows("playlist-tracks", p.tracks, true);
   }
 }
+$("playlist-art").onclick = () => $("playlist-photo").click();
+$("playlist-photo").onchange = async (event) => {
+  const file = event.target.files[0];
+  event.target.value = "";
+  const p = state.playlists.find((p) => p.id === selected);
+  if (!file || !p) return;
+  if (file.size > 5 * 1024 * 1024) {
+    toast("Choose a photo smaller than 5 MB.");
+    return;
+  }
+  $("playlist-art").disabled = true;
+  $("playlist-art").setAttribute("aria-busy", "true");
+  try {
+    accept(await request(`/api/playlists/${encodeURIComponent(p.id)}/cover?revision=${p.revision}`, file));
+    toast("Playlist photo updated for everyone.", true);
+  } catch (error) {
+    toast(error.message);
+    try { accept(await request("/api/state")); } catch {}
+  } finally {
+    $("playlist-art").disabled = false;
+    $("playlist-art").removeAttribute("aria-busy");
+  }
+};
 async function savePlaylist(rows, revision) {
   const p = state.playlists.find((p) => p.id === selected);
   if (!p) return;

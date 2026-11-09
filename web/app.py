@@ -2,9 +2,11 @@
 import asyncio
 import hashlib
 import html
+import io
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -12,16 +14,42 @@ from urllib.parse import urlencode
 
 import aiohttp
 from aiohttp import web
+from PIL import Image, UnidentifiedImageError
 import private
 
 STATIC = Path(__file__).parent / 'static'
 API = 'https://discord.com/api/v10'
 COOKIE = 'kirbo_session'
 SESSION_AGE = 90 * 86400
+MEMBERSHIP_TTL = 30
+MAX_COVER_BYTES = 5 * 1024 * 1024
+
+
+def cover_image(data):
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            if image.format not in {'JPEG', 'PNG', 'WEBP'} or image.width * image.height > 25_000_000:
+                raise ValueError('Choose a JPG, PNG or WebP image up to 25 megapixels.')
+            image.thumbnail((640, 640))
+            output = io.BytesIO()
+            image = image.convert('RGBA')
+            image.info.clear()
+            image.save(output, format='PNG')
+            return output.getvalue()
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as error:
+        raise ValueError('Choose a valid JPG, PNG or WebP image.') from error
 
 
 def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def remove_cover(path):
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        # Windows can keep an old photo open while another browser downloads it.
+        logging.warning('Could not remove unused playlist photo %s', path.name)
 
 
 class Website:
@@ -41,12 +69,17 @@ class Website:
         self.session_lock = asyncio.Lock()
         self.discord_limits = {}
         self.discord_global_limit = 0
-        self.app = web.Application(middlewares=[self.guard], client_max_size=1024 * 1024)
+        self.membership_cache = {}
+        self.voice_members = {}
+        self.artwork_tasks = set()
+        self.app = web.Application(middlewares=[self.guard], client_max_size=MAX_COVER_BYTES)
         self.app.add_routes([
             web.get('/', self.index), web.get('/auth/login', self.login),
             web.get('/auth/callback', self.callback), web.get('/api/me', self.me),
             web.get('/api/state', self.state), web.get('/api/events', self.events),
             web.post('/api/logout', self.logout), web.post('/api/action', self.action),
+            web.get('/api/playlists/{ident:[a-f0-9]{32}}/cover', self.get_cover),
+            web.post('/api/playlists/{ident:[a-f0-9]{32}}/cover', self.upload_cover),
         ])
         self.app.router.add_static('/static/', STATIC, show_index=False)
         self.app.on_startup.append(self.open)
@@ -55,9 +88,56 @@ class Website:
 
     async def open(self, app):
         self.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20))
+        self.refresh_artwork()
+
+    def refresh_artwork(self):
+        task = asyncio.create_task(self.music.enrich_playlists())
+        self.artwork_tasks.add(task)
+        task.add_done_callback(self.artwork_tasks.discard)
 
     async def close(self, app):
+        for task in tuple(self.artwork_tasks):
+            task.cancel()
+        if self.artwork_tasks:
+            await asyncio.gather(*self.artwork_tasks, return_exceptions=True)
         await self.http.close()
+
+    async def get_cover(self, request):
+        playlist = self.music.store.playlist(request.match_info['ident'])
+        if not playlist or not re.fullmatch(r'[a-f0-9]{32}\.png', playlist['cover'] or ''):
+            raise web.HTTPNotFound(reason='Playlist photo not found.')
+        path = self.music.store.covers / playlist['cover']
+        if not path.is_file():
+            raise web.HTTPNotFound(reason='Playlist photo not found.')
+        return web.FileResponse(path)
+
+    async def upload_cover(self, request):
+        playlist = self.music.store.playlist(request.match_info['ident'])
+        if not playlist:
+            raise ValueError('Playlist no longer exists.')
+        revision = int(request.query.get('revision', '0'))
+        if revision != playlist['revision']:
+            raise ValueError('Playlist changed. Refresh and try again.')
+        data = await asyncio.to_thread(cover_image, await request.read())
+        latest = self.music.store.playlist(playlist['id'])
+        if not latest or latest['revision'] != revision:
+            raise ValueError('Playlist changed during the upload. Try again.')
+        covers = self.music.store.covers
+        covers.mkdir(parents=True, exist_ok=True)
+        filename = secrets.token_hex(16) + '.png'
+        path = covers / filename
+        try:
+            path.write_bytes(data)
+            self.db.execute('UPDATE playlists SET cover=?, revision=revision+1 WHERE id=?', (filename, playlist['id']))
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            remove_cover(path)
+            raise
+        if latest['cover']:
+            remove_cover(covers / latest['cover'])
+        self.music.changed(request['session']['user']['username'], f"changed the photo for {latest['name']}")
+        return web.json_response(self.music.snapshot())
 
     async def shutdown(self, app):
         for task in tuple(self.streams):
@@ -71,7 +151,7 @@ class Website:
             if request.path.startswith('/api/'):
                 if request.method != 'GET' and request.headers.get('Origin') != self.origin:
                     raise web.HTTPForbidden(reason='Invalid request origin')
-                session = await self.session(request, force=request.method != 'GET')
+                session = await self.session(request)
                 request['session'] = session
                 if request.method != 'GET' and not secrets.compare_digest(request.headers.get('X-CSRF-Token', ''), session['csrf']):
                     raise web.HTTPForbidden(reason='Invalid request token')
@@ -154,19 +234,27 @@ class Website:
         session['user'] = user
         session['checked'] = time.time()
 
-    async def session(self, request, force=False):
+    async def session(self, request):
         async with self.session_lock:
-            return await self.read_session(request, force)
+            return await self.read_session(request)
 
-    async def read_session(self, request, force=False):
+    async def read_session(self, request):
         key = digest(request.cookies.get(COOKIE, ''))
         row = self.db.execute('SELECT payload,expires FROM sessions WHERE id=?', (key,)).fetchone()
         if not row or row[1] < time.time():
             raise web.HTTPUnauthorized(reason='Sign in with Discord to continue.')
         session = json.loads(row[0])
+        user_id = session['user']['id']
+        if int(user_id) in private.BLACKLISTED_USERS:
+            raise web.HTTPForbidden(reason='Access denied.')
+        cached = self.membership_cache.get(user_id)
+        if cached and cached['checked'] > session.get('checked', 0):
+            session.update(cached)
         try:
-            if force or session.get('checked', 0) < time.time() - 30:
+            if session.get('checked', 0) < time.time() - MEMBERSHIP_TTL:
                 await self.membership(session)
+            # Share only verification results, never OAuth tokens or CSRF tokens.
+            self.membership_cache[user_id] = dict(user=session['user'], checked=session['checked'])
         except (web.HTTPForbidden, web.HTTPUnauthorized):
             self.db.execute('DELETE FROM sessions WHERE id=?', (key,))
             self.db.commit()
@@ -237,7 +325,7 @@ class Website:
             checked = time.monotonic()
             while True:
                 if time.monotonic() - checked > 20:
-                    await self.session(request, force=True)
+                    await self.session(request)
                     checked = time.monotonic()
                 event.clear()
                 await response.write(('data: ' + json.dumps(self.music.snapshot()) + '\n\n').encode())
@@ -276,7 +364,13 @@ class Website:
         if not music.guild:
             raise web.HTTPServiceUnavailable(reason='Kirbo is connecting to Discord.')
         if action in {'add', 'queue_playlist', 'pause', 'resume', 'skip', 'stop'}:
-            member = await music.guild.fetch_member(int(session['user']['id']))
+            user_id = int(session['user']['id'])
+            cached = self.voice_members.get(user_id)
+            if cached and cached[0] > time.monotonic():
+                member = cached[1]
+            else:
+                member = music.guild.get_member(user_id) or await music.guild.fetch_member(user_id)
+                self.voice_members[user_id] = (time.monotonic() + MEMBERSHIP_TTL, member)
         if action == 'add':
             await music.add(data['query'], member, actor, bool(data.get('next')))
         elif action in {'pause', 'resume', 'skip', 'stop', 'shuffle', 'clear'}:
@@ -313,12 +407,15 @@ class Website:
                 raise ValueError('Playlist changed. Refresh and try again.')
             self.db.execute('DELETE FROM playlists WHERE id=?', (playlist['id'],))
             self.db.commit()
+            if playlist['cover']:
+                remove_cover(music.store.covers / playlist['cover'])
             music.changed(actor, f"deleted playlist {playlist['name']}")
         elif action == 'import_spotify':
             rows = await music.spotify_rows(data['url'])
             if not rows:
                 raise ValueError('Spotify returned no playable songs.')
             music.store.save_playlist(None, data['name'], rows)
+            self.refresh_artwork()
             music.changed(actor, f"imported playlist {data['name']}")
         elif action == 'queue_playlist':
             if data.get('url'):
