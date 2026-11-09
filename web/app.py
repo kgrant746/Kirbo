@@ -24,6 +24,7 @@ COOKIE = 'kirbo_session'
 SESSION_AGE = 90 * 86400
 MEMBERSHIP_TTL = 30
 MAX_COVER_BYTES = 5 * 1024 * 1024
+CREATOR_ID = 227126966287859713
 
 
 def cover_image(data):
@@ -72,6 +73,9 @@ class Website:
         self.discord_global_limit = 0
         self.membership_cache = {}
         self.voice_members = {}
+        self.creator_avatar_url = '/static/icon.svg'
+        self.creator_avatar_expires = 0
+        self.creator_avatar_lock = asyncio.Lock()
         self.artwork_tasks = set()
         self.app = web.Application(middlewares=[self.guard], client_max_size=MAX_COVER_BYTES)
         self.app.add_routes([
@@ -159,7 +163,7 @@ class Website:
             response = await handler(request)
         except web.HTTPException as error:
             response = web.json_response({'error': error.reason}, status=error.status) if request.path.startswith('/api/') else web.Response(
-                text='<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kirbo · Sign in</title><link rel="stylesheet" href="/static/app.css"></head><body><div class="login-screen"><div class="login-card"><img src="/static/icon.svg" width="72" height="72" alt="Kirbo"><h1>Not quite there.</h1><p>' + html.escape(error.reason) + '</p><a class="button primary discord-login" href="/">Back to Kirbo</a></div></div></body></html>',
+                text='<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kirbo · Sign in</title><link rel="stylesheet" href="/static/app.css"></head><body><div class="login-screen"><div class="login-card"><img src="/static/icon.svg" width="72" height="72" alt="Kirbo"><h1>Couldn’t open Kirbo.</h1><p>' + html.escape(error.reason) + '</p><a class="button primary discord-login" href="/">Back to Kirbo</a></div></div></body></html>',
                 content_type='text/html', status=error.status)
             if 'Retry-After' in error.headers:
                 response.headers['Retry-After'] = error.headers['Retry-After']
@@ -322,11 +326,25 @@ class Website:
         response.del_cookie('kirbo_oauth')
         return response
 
+    async def creator_avatar(self):
+        async with self.creator_avatar_lock:
+            if self.music.guild and time.monotonic() >= self.creator_avatar_expires:
+                self.creator_avatar_expires = time.monotonic() + 60
+                try:
+                    user = await asyncio.wait_for(self.music.bot.fetch_user(CREATOR_ID), timeout=5)
+                except (discord.HTTPException, aiohttp.ClientError, asyncio.TimeoutError):
+                    logging.warning('Could not update the creator avatar; keeping the cached image')
+                else:
+                    self.creator_avatar_url = user.display_avatar.with_size(64).url
+                    self.creator_avatar_expires = time.monotonic() + 3600
+            return self.creator_avatar_url
+
     async def me(self, request):
         session = request['session']
         user = session['user']
         avatar = f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png?size=64" if user.get('avatar') else f"https://cdn.discordapp.com/embed/avatars/{(int(user['id']) >> 22) % 6}.png"
-        return web.json_response(dict(id=user['id'], username=user['username'], avatar=avatar, csrf=session['csrf']))
+        return web.json_response(dict(id=user['id'], username=user['username'], avatar=avatar,
+                                      creator_avatar=await self.creator_avatar(), csrf=session['csrf']))
 
     async def logout(self, request):
         self.db.execute('DELETE FROM sessions WHERE id=?', (digest(request.cookies.get(COOKIE, '')),))

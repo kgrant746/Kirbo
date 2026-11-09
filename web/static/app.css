@@ -181,7 +181,7 @@ p {
   color: var(--muted);
   margin-top: 3px;
 }
-.server-label {
+.creator-credit {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -191,16 +191,17 @@ p {
   font-size: 11px;
   font-weight: 600;
 }
-.server-label small {
+.creator-credit small {
   display: block;
   color: #77798c;
   font-size: 9px;
   font-weight: 400;
-  margin-top: 5px;
+  margin-bottom: 4px;
 }
-.server-avatar {
-  display: grid;
-  place-items: center;
+.creator-avatar {
+  display: block;
+  object-fit: cover;
+  flex-shrink: 0;
   background: #352a32;
   color: #f3b6d6;
   width: 32px;
@@ -258,10 +259,6 @@ p {
 .sidebar-note b {
   font-weight: 500;
   margin-left: 5px;
-}
-.sidebar-note p {
-  font-size: 9px;
-  margin-top: 7px;
 }
 .logout {
   background: transparent;
@@ -325,19 +322,6 @@ main {
 }
 .page-heading h1 {
   margin: 8px 0;
-}
-.page-heading p {
-  font-size: 12px;
-}
-.live-badge {
-  font-size: 10px;
-  border: 1px solid #3a3c49;
-  border-radius: 30px;
-  padding: 8px 11px;
-  color: #c3c5d1;
-  display: flex;
-  align-items: center;
-  gap: 7px;
 }
 .tabs {
   display: flex;
@@ -1091,7 +1075,7 @@ dialog::backdrop {
     padding: 0 0 25px;
   }
   .brand div,
-  .server-label,
+  .creator-credit,
   .nav-label,
   .sidebar-note,
   .logout span {
@@ -1140,18 +1124,9 @@ dialog::backdrop {
   .page-heading h1 {
     font-size: 34px;
   }
-  .page-heading p {
-    font-size: 10px;
-    max-width: 200px;
-  }
   .eyebrow {
     font-size: 8px;
     letter-spacing: 1.4px;
-  }
-  .live-badge {
-    padding: 7px;
-    font-size: 0;
-    gap: 0;
   }
   .tabs {
     margin-bottom: 20px;

@@ -151,7 +151,7 @@ function syncHTML(parent, html) {
 function rowHTML(row, index, playlist = false, current = false) {
   return `<div class="track-row${current ? " current" : ""}" data-id="${esc(row.id)}" ${current ? "" : 'tabindex="0"'}>
   <span class="track-number" ${current ? "" : 'title="Drag to reorder; Alt+Arrow keys also move a song"'}>${current ? playingIcon() : index + 1}</span>
-  <div class="track-info">${image(row.thumbnail)}<div class="track-text"><div class="track-title" title="${esc(row.title)}">${esc(row.title)}</div><div class="track-artist">${current ? (state.loading ? "Downloading audio…" : state.paused ? "Paused" : "Playing now") : esc(row.artist || "YouTube · shared with the server")}</div></div></div>
+  <div class="track-info">${image(row.thumbnail)}<div class="track-text"><div class="track-title" title="${esc(row.title)}">${esc(row.title)}</div><div class="track-artist">${current ? (state.loading ? "Downloading audio…" : state.paused ? "Paused" : "Playing now") : esc(row.artist || "YouTube")}</div></div></div>
   ${playlist ? '<button class="row-add" data-row-action="add">＋ Queue</button>' : `<span class="track-by">${esc(row.added_by || "Kirbo")}</span>`}
   <span class="duration">${duration(row.duration)}</span>${current ? "<span></span>" : '<button class="row-delete" data-row-action="remove" aria-label="Remove song">×</button>'}</div>`;
 }
@@ -172,7 +172,7 @@ function render() {
   const current = state.current;
   syncHTML($("player-track"), current
     ? `${image(current.thumbnail)}<div><b>${esc(current.title)}</b><small>${state.loading ? "Preparing audio…" : state.paused ? "Paused" : esc(current.artist || "Playing in Discord")}</small></div>`
-    : '<div class="cover placeholder">♫</div><div><b>Ready when you are</b><small>Join a voice channel and add a song</small></div>');
+    : '<div class="cover placeholder">♫</div><div><b>Nothing playing</b><small>Join a voice channel and add a song</small></div>');
   syncHTML($("pause-button"), state.paused || !current ? playIcon : pauseIcon);
   $("pause-button").setAttribute("aria-label", state.paused ? "Resume playback" : "Pause playback");
   $("pause-button").dataset.control = state.paused ? "resume" : "pause";
@@ -197,7 +197,7 @@ function render() {
               `<div class="activity-row"><span class="activity-icon">♫</span><div class="activity-copy"><b>${esc(e.actor)}</b> ${esc(e.message)}</div><time datetime="${new Date(e.at * 1000).toISOString()}" title="${esc(new Date(e.at * 1000).toLocaleString())}">${esc(new Date(e.at * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></div>`,
           )
           .join("")
-      : '<div class="empty"><h3>Quiet in here. For now.</h3><p>The server’s music activity will appear here.</p></div>';
+      : '<div class="empty"><h3>No evidence. Yet.</h3><p>Queue changes and playback activity show up here.</p></div>';
   }
 }
 function updateProgress() {
@@ -438,7 +438,7 @@ function renderLibrary() {
   $("library-empty").hidden = Boolean(state.playlists.length);
   syncHTML($("playlist-grid"), state.playlists
     .map((p) => {
-      return `<button class="playlist-card" data-playlist="${esc(p.id)}"><div class="art">${playlistArt(p)}</div><h3>${esc(p.name)}</h3><p>${p.tracks.length} songs · Shared playlist</p></button>`;
+      return `<button class="playlist-card" data-playlist="${esc(p.id)}"><div class="art">${playlistArt(p)}</div><h3>${esc(p.name)}</h3><p>${p.tracks.length} ${p.tracks.length === 1 ? "song" : "songs"}</p></button>`;
     })
     .join(""));
   $("playlist-grid")
@@ -457,7 +457,7 @@ function renderLibrary() {
   if (p) {
     $("playlist-title").textContent = p.name;
     $("playlist-meta").textContent =
-      `${p.tracks.length} songs · Everyone can contribute`;
+      `${p.tracks.length} ${p.tracks.length === 1 ? "song" : "songs"} · ${duration(p.tracks.reduce((sum, row) => sum + (Number(row.duration) || 0), 0))}`;
     syncHTML($("playlist-art"), `${playlistArt(p)}<span class="choose-photo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6zM14 5l5 5"/></svg><span>Choose photo</span></span>`);
     renderRows("playlist-tracks", p.tracks, true);
   }
@@ -476,7 +476,7 @@ $("playlist-photo").onchange = async (event) => {
   $("playlist-art").setAttribute("aria-busy", "true");
   try {
     accept(await request(`/api/playlists/${encodeURIComponent(p.id)}/cover?revision=${p.revision}`, file));
-    toast("Playlist photo updated for everyone.", true);
+    toast("Playlist photo updated.", true);
   } catch (error) {
     toast(error.message);
     try { accept(await request("/api/state")); } catch {}
@@ -558,7 +558,7 @@ $("close-editor").onclick = $("cancel-editor").onclick = () =>
   $("editor").close();
 $("new-playlist").onclick = () =>
   modal(
-    "New shared playlist",
+    "New playlist",
     [{ name: "name", label: "Playlist name", maxLength: 100 }],
     async ({ name }) => {
       await action({ action: "save_playlist", name, tracks: [] });
@@ -574,7 +574,7 @@ $("import-playlist").onclick = () =>
         name: "url",
         label: "Spotify playlist link",
         type: "url",
-        hint: "Spotify playlists must be available to the configured Spotify application.",
+        hint: "Use a public Spotify playlist link.",
       },
     ],
     async ({ name, url }) => {
@@ -650,7 +650,7 @@ $("direct-playlist").onsubmit = (event) => {
   event.preventDefault();
   action({ action: "queue_playlist", url: $("spotify-direct").value })
     .then(() => {
-      toast("Adding Spotify playlist songs.", true);
+      toast("Spotify playlist added to the queue.", true);
       $("spotify-direct").value = "";
     })
     .catch(() => {});
@@ -690,6 +690,11 @@ async function boot() {
     me = await request("/api/me");
     $("username").textContent = me.username;
     $("avatar").src = me.avatar;
+    $("creator-avatar").onerror = () => {
+      $("creator-avatar").onerror = null;
+      $("creator-avatar").src = "/static/icon.svg";
+    };
+    $("creator-avatar").src = me.creator_avatar || "/static/icon.svg";
     $("login").hidden = true;
     $("app").hidden = false;
     tab(
@@ -700,10 +705,10 @@ async function boot() {
     accept(await request("/api/state"));
     stream = new EventSource("/api/events");
     stream.onopen = () => {
-      $("connection").textContent = "Connected to Kirbo";
+      $("connection").textContent = "Synced with Discord";
     };
     stream.onmessage = (e) => {
-      $("connection").textContent = "Connected to Kirbo";
+      $("connection").textContent = "Synced with Discord";
       accept(JSON.parse(e.data));
     };
     stream.addEventListener("signed-out", () => signedOut("Your Discord session or server membership needs to be verified. Sign in again."));

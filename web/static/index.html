@@ -16,11 +16,8 @@
           class="eyebrow"
           >TEAM ROCKET 2.0</span
         >
-        <h1>A good place<br />to press play.</h1>
-        <p>
-          Your shared soundtrack, playlists, and music controls. All together in
-          one place.
-        </p>
+        <h1>Kirbo has<br />the aux.</h1>
+        <p>Your music taste is now everyone else’s problem.</p>
         <a class="button primary discord-login" href="/auth/login"
           >Sign in with Discord <span>↗</span></a
         ><small>Only members of Team Rocket 2.0 can enter.</small>
@@ -28,18 +25,18 @@
       </div>
       <div class="login-decoration" aria-hidden="true">
         <div class="disc"></div>
-        <span>KIRBO / MUSIC FOR THE SERVER</span>
+        <span>KIRBO / POYO</span>
       </div>
     </div>
     <div id="app" hidden>
       <aside class="sidebar">
         <a class="brand" href="#queue" aria-label="Kirbo — open music queue"
           ><img src="/static/icon.svg" alt="" width="38" height="38" />
-          <div>Kirbo<span>THE SERVER’S AUX CORD</span></div></a
+          <div>Kirbo<span>POYO</span></div></a
         >
-        <div class="server-label">
-          <span class="server-avatar">TR</span>
-          <div>Team Rocket 2.0<small>Private server workspace</small></div>
+        <div class="creator-credit">
+          <img id="creator-avatar" class="creator-avatar" src="/static/icon.svg" alt="CosmicCats’ Discord avatar" width="32" height="32" />
+          <div><small>Created by</small>CosmicCats</div>
         </div>
         <div class="nav-label">WORKSPACE</div>
         <nav aria-label="Main navigation">
@@ -47,8 +44,7 @@
             <span>♫</span> Music <span class="nav-dot"></span></button>
         </nav>
         <div class="sidebar-note">
-          <span class="status-dot"></span><b id="connection">Connecting</b>
-          <p>One queue. Everyone in sync.</p>
+          <span class="status-dot"></span><b id="connection">Syncing…</b>
         </div>
         <button id="logout" class="logout">↪ <span>Sign out</span></button>
       </aside>
@@ -67,13 +63,9 @@
         <div class="workspace">
           <div class="page-heading">
             <div>
-              <span class="eyebrow">THE SOUND OF TEAM ROCKET</span>
+              <span class="eyebrow">AUX CORD CRIMES</span>
               <h1>Music</h1>
-              <p>Pass the aux. Build something worth listening to.</p>
             </div>
-            <span class="live-badge"
-              ><span class="status-dot"></span> Shared live</span
-            >
           </div>
           <div class="tabs" role="tablist" aria-label="Music pages">
             <button
@@ -119,9 +111,7 @@
             <div class="section-heading">
               <div>
                 <h2>Up next <span id="total-duration" class="muted"></span></h2>
-                <p>
-                  Drag songs to set the mood. Changes are shared with everyone.
-                </p>
+                <p>Drag songs to change the order</p>
               </div>
               <div class="toolbar">
                 <button class="button subtle" data-control="shuffle">
@@ -144,8 +134,7 @@
               <div class="empty-icon">♫</div>
               <h3>Nothing in the queue.</h3>
               <p>
-                Search above to add a track. Join a Discord voice channel to get
-                started.
+                Join a Discord voice channel, then add a song above.
               </p>
             </div>
           </section>
@@ -158,8 +147,8 @@
             <div id="library-view">
               <div class="section-heading">
                 <div>
-                  <h2>Made for the whole server</h2>
-                  <p>A shared library. Everyone can add their favorites.</p>
+                  <h2>Saved playlists</h2>
+                  <p>For when one questionable song isn’t enough.</p>
                 </div>
                 <div class="toolbar">
                   <button class="button subtle" id="import-playlist">
@@ -181,7 +170,7 @@
               <div id="playlist-grid" class="playlist-grid"></div>
               <div id="library-empty" class="empty" hidden>
                 <div class="empty-icon">▤</div>
-                <h3>A home for your favorites.</h3>
+                <h3>No playlists yet.</h3>
                 <p>Create a playlist or import one from Spotify.</p>
               </div>
             </div>
@@ -191,7 +180,7 @@
                 <button id="playlist-art" class="playlist-art" type="button" aria-label="Choose playlist photo" title="Choose photo (JPG, PNG or WebP, up to 5 MB)">♫</button>
                 <input id="playlist-photo" type="file" accept="image/jpeg,image/png,image/webp" hidden>
                 <div>
-                  <span class="eyebrow">SHARED PLAYLIST</span>
+                  <span class="eyebrow">PLAYLIST</span>
                   <h2 id="playlist-title"></h2>
                   <p id="playlist-meta"></p>
                   <div class="toolbar">
@@ -235,8 +224,8 @@
           >
             <div class="section-heading">
               <div>
-                <h2>The listening room</h2>
-                <p>What happened, who did it, and when. Updated live.</p>
+                <h2>The receipts</h2>
+                <p>Who queued what. No plausible deniability.</p>
               </div>
               <span class="muted">Latest 200 events</span>
             </div>
@@ -247,33 +236,35 @@
           <div id="player-track" class="player-track">
             <div class="cover placeholder">♫</div>
             <div>
-              <b>Ready when you are</b
+              <b>Nothing playing</b
               ><small>Join a voice channel and add a song</small>
             </div>
           </div>
           <div class="player-center">
             <div class="player-controls">
-            <button
-              id="pause-button"
-              class="play-button"
-              aria-label="Pause or resume"
-              data-control="pause"
-            >
-              Ⅱ</button
-            ><button
-              id="skip-button"
-              class="icon-button"
-              data-control="skip"
-              aria-label="Skip current song"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 4 11 8-11 8zm12 0h3v16h-3z"/></svg></button
-            ><button
-              class="icon-button"
-              data-control="stop"
-              aria-label="Stop and disconnect"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>
-            </button>
+              <button
+                class="icon-button"
+                data-control="stop"
+                aria-label="Stop and disconnect"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>
+              </button>
+              <button
+                id="pause-button"
+                class="play-button"
+                aria-label="Pause or resume"
+                data-control="pause"
+              >
+                Ⅱ
+              </button>
+              <button
+                id="skip-button"
+                class="icon-button"
+                data-control="skip"
+                aria-label="Skip current song"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 4 11 8-11 8zm12 0h3v16h-3z"/></svg>
+              </button>
             </div>
             <div class="playback-timeline">
               <span id="elapsed">0:00</span>

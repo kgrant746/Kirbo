@@ -10,7 +10,7 @@
   let fixture = structuredClone(initial), events, rejectReorder = false;
   const response = (data, status = 200) => new Response(JSON.stringify(data), {status, headers:{"Content-Type":"application/json"}});
   window.fetch = async (path, options = {}) => {
-    if (path === "/api/me") return response({id:"1", username:"Preview friend", avatar:"/static/icon.svg", csrf:"test"});
+    if (path === "/api/me") return response({id:"1", username:"Preview friend", avatar:"/static/icon.svg", creator_avatar:"/static/icon.svg", csrf:"test"});
     if (path === "/api/state") return response(fixture);
     if (path === "/api/action") {
       const data = JSON.parse(options.body);
@@ -59,7 +59,10 @@
       tab("queue");
       events.listeners.verification();
       publish();
-      check(document.getElementById("connection").textContent === "Connected to Kirbo", "Connection label did not recover with the stream");
+      check(document.getElementById("connection").textContent === "Synced with Discord", "Connection label did not recover with the stream");
+      check(document.querySelector(".creator-credit").textContent.includes("CosmicCats"), "Creator credit is missing");
+      check(document.querySelector(".brand span").textContent === "POYO", "Brand tagline is incorrect");
+      check(!document.querySelector(".live-badge") && !document.querySelector(".page-heading p") && !document.querySelector(".sidebar-note p"), "Removed flavor text is still present");
       const playerImage = document.querySelector("#player-track img");
       const currentImage = document.querySelector("#current-row img");
       const queueImages = [...document.querySelectorAll("#queue-list img")];
@@ -97,7 +100,7 @@
       check(document.getElementById("elapsed").textContent === elapsed, "Progress advanced while paused");
       fixture.current = null; fixture.queue = []; fixture.position = 0; fixture.revision++; publish();
       check(document.getElementById("now-playing").hidden, "Last track remained in Now playing");
-      check(!document.getElementById("queue-empty").hidden && document.getElementById("player-track").textContent.includes("Ready when you are"), "Idle state did not reset");
+      check(!document.getElementById("queue-empty").hidden && document.getElementById("player-track").textContent.includes("Nothing playing"), "Idle state did not reset");
       fixture = structuredClone(initial); fixture.instance = "restarted"; fixture.revision = 0; publish();
       check(!document.getElementById("now-playing").hidden, "Restart with a lower revision was ignored");
       check(document.querySelectorAll(".sound-bars i").length === 4, "Playing indicator should contain four bars");

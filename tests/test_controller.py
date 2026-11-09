@@ -19,7 +19,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 
 from music_service import MusicController, PlaybackSource, NORMALIZE_AUDIO, Store, track, validate_query
-from web.app import Website, cover_image, digest, MAX_COVER_BYTES
+from web.app import Website, cover_image, digest, MAX_COVER_BYTES, CREATOR_ID
 
 
 class CoverImageTests(unittest.TestCase):
@@ -153,7 +153,9 @@ class ControllerCase(unittest.IsolatedAsyncioTestCase):
                                   is_paused=lambda: False, stop=lambda: None)
         self.guild = SimpleNamespace(voice_client=self.vc)
         config = SimpleNamespace(GUILD_ID=42, SPOTIFY_CLIENT_ID='test', SPOTIFY_CLIENT_SECRET='test', FFMPEG_PATH='ffmpeg')
-        self.music = MusicController(SimpleNamespace(get_guild=lambda _: self.guild), config, self.store)
+        creator = SimpleNamespace(display_avatar=SimpleNamespace(with_size=lambda size: SimpleNamespace(url='https://cdn.discordapp.com/creator.png')))
+        bot = SimpleNamespace(get_guild=lambda _: self.guild, fetch_user=AsyncMock(return_value=creator))
+        self.music = MusicController(bot, config, self.store)
 
     async def asyncTearDown(self):
         self.store.db.close()
@@ -493,6 +495,34 @@ class WebSecurityTests(ControllerCase):
         cookie = response.headers['Set-Cookie']
         for flag in ['HttpOnly','Secure','SameSite=Lax']:
             self.assertIn(flag,cookie)
+
+    async def test_creator_avatar_is_shared_and_cached_without_changing_signed_in_user(self):
+        for _ in range(2):
+            response = await self.client.get('/api/me', headers=self.headers)
+            self.assertEqual(response.status, 200)
+            data = await response.json()
+            self.assertEqual(data['creator_avatar'], 'https://cdn.discordapp.com/creator.png')
+            self.assertEqual(data['id'], '12345')
+            self.assertEqual(data['username'], 'friend')
+        self.music.bot.fetch_user.assert_awaited_once_with(CREATOR_ID)
+        self.site.creator_avatar_expires = 0
+        await self.client.get('/api/me', headers=self.headers)
+        self.assertEqual(self.music.bot.fetch_user.await_count, 2)
+
+    async def test_creator_avatar_failure_keeps_sign_in_working_and_reuses_previous_photo(self):
+        await self.client.get('/api/me', headers=self.headers)
+        self.site.creator_avatar_expires = 0
+        self.music.bot.fetch_user.side_effect = asyncio.TimeoutError()
+        with self.assertLogs(level='WARNING'):
+            response = await self.client.get('/api/me', headers=self.headers)
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())['creator_avatar'], 'https://cdn.discordapp.com/creator.png')
+        await self.client.get('/api/me', headers=self.headers)
+        self.assertEqual(self.music.bot.fetch_user.await_count, 2)
+
+    async def test_anonymous_requests_cannot_trigger_creator_profile_lookups(self):
+        self.assertEqual((await self.client.get('/api/me')).status, 401)
+        self.music.bot.fetch_user.assert_not_awaited()
 
     async def test_action_verifies_membership_only_once(self):
         self.expire_membership()
