@@ -28,14 +28,15 @@ class ProfileTests(unittest.IsolatedAsyncioTestCase):
         for event in self.music.listeners:
             event.set()
 
-    async def test_description_preserves_existing_text_and_adds_link_only_once(self):
+    async def test_description_replaces_help_and_existing_text_with_only_the_link(self):
+        self.app.description = 'Use /help\nMusic controller: '+WEBSITE_URL
         await self.profile.update_description()
-        self.app.edit.assert_awaited_once_with(description='POYO POYO\n\nMusic controller: '+WEBSITE_URL)
+        self.app.edit.assert_awaited_once_with(description=WEBSITE_URL)
         await self.profile.update_description()
         self.bot.application_info.assert_awaited_once()
 
     async def test_existing_link_needs_no_edit_and_failure_does_not_break_startup(self):
-        self.app.description = 'Control me at '+WEBSITE_URL
+        self.app.description = WEBSITE_URL
         await self.profile.update_description()
         self.app.edit.assert_not_awaited()
         self.profile.description_synced = False

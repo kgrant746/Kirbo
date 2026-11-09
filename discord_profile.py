@@ -25,12 +25,11 @@ class DiscordProfile:
         try:
             app = await self.bot.application_info()
             description = app.description or ''
-            if WEBSITE_URL not in description.lower():
-                description = description.rstrip() + '\n\nMusic controller: ' + WEBSITE_URL
-                await app.edit(description=description.lstrip())
+            if description != WEBSITE_URL:
+                await app.edit(description=WEBSITE_URL)
             self.description_synced = True
         except Exception:
-            log.warning('Could not add the website to the bot description. Add https://kirbo.bot in Discord Developer Portal > General Information > Description.')
+            log.warning('Could not update the bot description. Set it to https://kirbo.bot in Discord Developer Portal > General Information > Description.')
 
     def start(self):
         self.force = True

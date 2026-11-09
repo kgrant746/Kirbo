@@ -875,11 +875,8 @@ main {
   justify-content: space-between;
   padding: 17px 20px;
 }
-.login-card small {
-  display: block;
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 18px;
+#login .discord-login {
+  margin-top: 0;
 }
 .login-decoration {
   position: relative;
@@ -911,13 +908,6 @@ main {
   display: grid;
   place-items: center;
   background: url("/static/icon.svg") center / cover no-repeat;
-}
-.login-decoration > span {
-  position: absolute;
-  bottom: 25px;
-  font-size: 8px;
-  letter-spacing: 2px;
-  color: #aa8e9e;
 }
 #toasts {
   position: fixed;
@@ -1012,6 +1002,9 @@ dialog::backdrop {
   color: var(--red);
   margin-top: 16px;
   font-size: 12px;
+}
+#login-error:empty {
+  display: none;
 }
 @media (max-width: 1050px) {
   .sidebar {

@@ -10,10 +10,10 @@ The bot and website run together on the computer that normally runs Kirbo. Push 
 4. Double-click **start_bot.bat**. It installs the patched dependency minimums and starts the bot and website together. No new `.env` variables, OAuth redirects or Discord permissions are required.
 5. Open Kirbo’s Discord profile. Its description should include `https://kirbo.bot`; during playback its activity should say **Listening to [song title]**. Close and reopen the profile if Discord is displaying cached information.
 
-The startup code adds `Music controller: https://kirbo.bot` to the existing application description without replacing its other text. If the console says it could not update the description, open [Discord Developer Portal](https://discord.com/developers/applications), select **Kirbo**, choose **General Information**, find **Description**, add the following line, and click **Save Changes**:
+The startup code sets the application description to only `https://kirbo.bot`, replacing old text such as `/help`. To edit it directly, open [Discord Developer Portal](https://discord.com/developers/applications), select **Kirbo**, choose **General Information**, find **Description**, replace its contents with the following line, and click **Save Changes**. The startup code enforces this same value when the bot restarts:
 
 ```text
-Music controller: https://kirbo.bot
+https://kirbo.bot
 ```
 
 The presence follows the same music player used by slash commands and the website. It clears while paused, loading or idle, and returns on resume. Rapid changes are combined to respect Discord's presence limits; music playback does not wait for presence updates. Discord only lets bots set basic activity fields, so this is a listening activity rather than Spotify’s full cover-art, progress and Listen Along card. See [Discord's activity restrictions](https://docs.discord.com/developers/events/gateway-events#activity-object).
