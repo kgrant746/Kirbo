@@ -8,6 +8,7 @@ let me,
   deferredState = null,
   busy = 0,
   activeTab = "queue";
+let sampledAt = performance.now();
 let queueSignature = "",
   librarySignature = "",
   logSignature = "";
@@ -99,17 +100,57 @@ document.querySelector(".brand").onclick = (event) => {
   tab("queue");
 };
 function accept(next) {
+  const previous = deferredState || state;
+  if (previous && next.instance === previous.instance && next.revision < previous.revision) return;
   if (dragging) {
     deferredState = next;
     return;
   }
-  if (state && next.revision < state.revision) return;
   state = next;
+  sampledAt = performance.now();
   render();
+}
+const pauseIcon = '<svg class="pause-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>';
+const playIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>';
+function playingIcon() {
+  if (state.loading) return '<span aria-label="Preparing audio">◌</span>';
+  if (state.paused) return `<span class="paused-indicator" aria-label="Paused">${pauseIcon}</span>`;
+  return '<span class="sound-bars" aria-label="Playing"><i></i><i></i><i></i><i></i></span>';
+}
+// Keep existing image and row elements attached when shared state changes.
+function syncHTML(parent, html) {
+  if (parent.innerHTML === html) return;
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  function patchChildren(target, source) {
+    const key = (node) => node.nodeType === 1 && (node.dataset.id || node.dataset.playlist);
+    const keyed = new Map([...target.childNodes].filter(key).map(node => [key(node), node]));
+    const children = [...source.childNodes];
+    children.forEach((next, i) => {
+      let old = key(next) ? keyed.get(key(next)) : target.childNodes[i];
+      if (!key(next) && key(old || {})) old = null;
+      if (!old) {
+        target.insertBefore(next, target.childNodes[i] || null);
+        return;
+      }
+      if (old !== target.childNodes[i]) target.insertBefore(old, target.childNodes[i] || null);
+      if (old.nodeType !== next.nodeType || old.nodeName !== next.nodeName) {
+        old.replaceWith(next);
+      } else if (old.nodeType === Node.TEXT_NODE) {
+        if (old.textContent !== next.textContent) old.textContent = next.textContent;
+      } else if (old.nodeType === Node.ELEMENT_NODE) {
+        for (const attr of [...old.attributes]) if (!next.hasAttribute(attr.name)) old.removeAttribute(attr.name);
+        for (const attr of [...next.attributes]) if (old.getAttribute(attr.name) !== attr.value) old.setAttribute(attr.name, attr.value);
+        patchChildren(old, next);
+      }
+    });
+    while (target.childNodes.length > children.length) target.lastChild.remove();
+  }
+  patchChildren(parent, template.content);
 }
 function rowHTML(row, index, playlist = false, current = false) {
   return `<div class="track-row${current ? " current" : ""}" data-id="${esc(row.id)}" ${current ? "" : 'tabindex="0"'}>
-  <span class="track-number" title="Drag to reorder; Alt+Arrow keys also move a song">${current ? (state.loading ? "◌" : "♫") : index + 1}</span>
+  <span class="track-number" ${current ? "" : 'title="Drag to reorder; Alt+Arrow keys also move a song"'}>${current ? playingIcon() : index + 1}</span>
   <div class="track-info">${image(row.thumbnail)}<div class="track-text"><div class="track-title" title="${esc(row.title)}">${esc(row.title)}</div><div class="track-artist">${current ? (state.loading ? "Downloading audio…" : state.paused ? "Paused" : "Playing now") : esc(row.artist || "YouTube · shared with the server")}</div></div></div>
   ${playlist ? '<button class="row-add" data-row-action="add">＋ Queue</button>' : `<span class="track-by">${esc(row.added_by || "Kirbo")}</span>`}
   <span class="duration">${duration(row.duration)}</span>${current ? "<span></span>" : '<button class="row-delete" data-row-action="remove" aria-label="Remove song">×</button>'}</div>`;
@@ -123,18 +164,21 @@ function render() {
     renderRows("queue-list", state.queue, false);
     queueSignature = qsig;
   }
-  $("current-row").innerHTML = state.current
+  syncHTML($("current-row"), state.current
     ? rowHTML(state.current, 0, false, true)
-    : "";
+    : "");
   $("now-playing").hidden = !state.current;
   $("queue-empty").hidden = Boolean(state.queue.length || state.current);
   const current = state.current;
-  $("player-track").innerHTML = current
+  syncHTML($("player-track"), current
     ? `${image(current.thumbnail)}<div><b>${esc(current.title)}</b><small>${state.loading ? "Preparing audio…" : state.paused ? "Paused" : esc(current.artist || "Playing in Discord")}</small></div>`
-    : '<div class="cover placeholder">♫</div><div><b>Ready when you are</b><small>Join a voice channel and add a song</small></div>';
-  $("pause-button").textContent = state.paused ? "▶" : "Ⅱ";
+    : '<div class="cover placeholder">♫</div><div><b>Ready when you are</b><small>Join a voice channel and add a song</small></div>');
+  syncHTML($("pause-button"), state.paused || !current ? playIcon : pauseIcon);
+  $("pause-button").setAttribute("aria-label", state.paused ? "Resume playback" : "Pause playback");
   $("pause-button").dataset.control = state.paused ? "resume" : "pause";
   $("pause-button").disabled = !current || state.loading;
+  $("skip-button").disabled = !current;
+  updateProgress();
   $("voice-status").textContent = state.channel
     ? `# ${state.channel}`
     : "Not connected";
@@ -156,6 +200,20 @@ function render() {
       : '<div class="empty"><h3>Quiet in here. For now.</h3><p>The server’s music activity will appear here.</p></div>';
   }
 }
+function updateProgress() {
+  if (!state) return;
+  const total = Math.max(0, Number(state.current?.duration) || 0);
+  const advancing = state.current && !state.loading && !state.paused;
+  let elapsed = Math.max(0, Number(state.position) || 0) + (advancing ? (performance.now() - sampledAt) / 1000 : 0);
+  elapsed = total ? Math.min(total, elapsed) : 0;
+  $("elapsed").textContent = duration(Math.floor(elapsed));
+  $("remaining").textContent = total ? `−${duration(Math.ceil(total - elapsed))}` : "0:00";
+  $("progress-fill").style.width = `${total ? elapsed / total * 100 : 0}%`;
+  $("song-progress").setAttribute("aria-valuemax", total || 1);
+  $("song-progress").setAttribute("aria-valuenow", elapsed);
+  $("song-progress").setAttribute("aria-valuetext", `${duration(Math.floor(elapsed))} of ${duration(total)}`);
+}
+setInterval(updateProgress, 250);
 function animateLayout(container, mutate) {
   const old = new Map(
     [...container.children].map((n) => [
@@ -182,7 +240,7 @@ function renderRows(id, rows, playlist) {
   const container = $(id),
     active = document.activeElement?.closest(".track-row")?.dataset.id;
   animateLayout(container, () => {
-    container.innerHTML = rows.map((r, i) => rowHTML(r, i, playlist)).join("");
+    syncHTML(container, rows.map((r, i) => rowHTML(r, i, playlist)).join(""));
   });
   if (active)
     [...container.children]
@@ -252,12 +310,12 @@ function renderRows(id, rows, playlist) {
       action({
         action: "reorder",
         ids: ordered.map((r) => r.id),
-        revision: state.revision,
+        revision: state.queue_revision,
       }).catch(() => {});
   };
 }
 function beginDrag(event, container, playlist) {
-  if (event.button !== 0 || event.target.closest("button,input")) return;
+  if (dragging || event.button !== 0 || event.target.closest("button,input")) return;
   const node = event.target.closest(".track-row");
   if (!node) return;
   event.preventDefault();
@@ -271,7 +329,7 @@ function beginDrag(event, container, playlist) {
     offset;
   const revision = playlist
     ? state.playlists.find((p) => p.id === selected)?.revision
-    : state.revision;
+    : state.queue_revision;
   function move(e) {
     if (!ghost && Math.hypot(e.clientX - startX, e.clientY - startY) < 7)
       return;
@@ -300,6 +358,7 @@ function beginDrag(event, container, playlist) {
           e.clientY < rect.top + rect.height / 2 ? target : target.nextSibling,
         );
       });
+    [...container.children].forEach((row, i) => { row.querySelector(".track-number").textContent = i + 1; });
     if (e.clientY > innerHeight - 110) window.scrollBy(0, 13);
     else if (e.clientY < 100) window.scrollBy(0, -13);
   }
@@ -310,23 +369,24 @@ function beginDrag(event, container, playlist) {
     if (!ghost) return;
     ghost.remove();
     node.classList.remove("dragging");
-    dragging = null;
     const ids = [...container.children].map((n) => n.dataset.id);
-    if (ids.join() !== original.join()) {
-      if (playlist) {
-        const p = state.playlists.find((p) => p.id === selected);
-        await savePlaylist(
-          ids.map((id) => p.tracks.find((r) => r.id === id)),
-          revision,
-        );
-      } else {
-        await action({ action: "reorder", ids, revision }).catch(() => {});
+    try {
+      if (ids.join() !== original.join()) {
+        if (playlist) {
+          const p = state.playlists.find((p) => p.id === selected);
+          if (p) await savePlaylist(ids.map((id) => p.tracks.find((r) => r.id === id)), revision);
+        } else {
+          await action({ action: "reorder", ids, revision }).catch(() => {});
+        }
       }
-    }
-    if (deferredState) {
-      const next = deferredState;
-      deferredState = null;
-      accept(next);
+    } finally {
+      dragging = null;
+      queueSignature = librarySignature = "";
+      if (deferredState) {
+        const next = deferredState;
+        deferredState = null;
+        accept(next);
+      } else render();
     }
   }
   function cancel() {
@@ -336,7 +396,12 @@ function beginDrag(event, container, playlist) {
     document.removeEventListener(moveEvent, move);
     document.removeEventListener(endEvent, end);
     document.removeEventListener("pointercancel", cancel);
-    render();
+    queueSignature = librarySignature = "";
+    if (deferredState) {
+      const next = deferredState;
+      deferredState = null;
+      accept(next);
+    } else render();
   }
   document.addEventListener(moveEvent, move, { passive: false });
   document.addEventListener(endEvent, end, { once: true });
@@ -371,11 +436,11 @@ function playlistArt(p) {
 }
 function renderLibrary() {
   $("library-empty").hidden = Boolean(state.playlists.length);
-  $("playlist-grid").innerHTML = state.playlists
+  syncHTML($("playlist-grid"), state.playlists
     .map((p) => {
       return `<button class="playlist-card" data-playlist="${esc(p.id)}"><div class="art">${playlistArt(p)}</div><h3>${esc(p.name)}</h3><p>${p.tracks.length} songs · Shared playlist</p></button>`;
     })
-    .join("");
+    .join(""));
   $("playlist-grid")
     .querySelectorAll("[data-playlist]")
     .forEach(
@@ -393,7 +458,7 @@ function renderLibrary() {
     $("playlist-title").textContent = p.name;
     $("playlist-meta").textContent =
       `${p.tracks.length} songs · Everyone can contribute`;
-    $("playlist-art").innerHTML = `${playlistArt(p)}<span class="choose-photo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6zM14 5l5 5"/></svg><span>Choose photo</span></span>`;
+    syncHTML($("playlist-art"), `${playlistArt(p)}<span class="choose-photo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6zM14 5l5 5"/></svg><span>Choose photo</span></span>`);
     renderRows("playlist-tracks", p.tracks, true);
   }
 }
@@ -563,11 +628,11 @@ $("delete-playlist").onclick = () => {
 };
 $("play-playlist").onclick = () =>
   action({ action: "queue_playlist", id: selected })
-    .then(() => toast("Adding playlist songs to the queue.", true))
+    .then(() => toast("Playlist added to the queue.", true))
     .catch(() => {});
 $("shuffle-playlist").onclick = () =>
   action({ action: "queue_playlist", id: selected, shuffle: true })
-    .then(() => toast("Adding shuffled songs to the queue.", true))
+    .then(() => toast("Playlist shuffled and added to the queue.", true))
     .catch(() => {});
 $("playlist-add").onsubmit = (event) => {
   event.preventDefault();
@@ -637,7 +702,12 @@ async function boot() {
     stream.onopen = () => {
       $("connection").textContent = "Connected to Kirbo";
     };
-    stream.onmessage = (e) => accept(JSON.parse(e.data));
+    stream.onmessage = (e) => {
+      $("connection").textContent = "Connected to Kirbo";
+      accept(JSON.parse(e.data));
+    };
+    stream.addEventListener("signed-out", () => signedOut("Your Discord session or server membership needs to be verified. Sign in again."));
+    stream.addEventListener("verification", () => { $("connection").textContent = "Waiting for Discord verification…"; });
     stream.onerror = () => {
       $("connection").textContent = "Reconnecting…";
       request("/api/me").catch(() => {});

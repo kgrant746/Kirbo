@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import aiohttp
+import discord
 from aiohttp import web
 from PIL import Image, UnidentifiedImageError
 import private
@@ -66,7 +67,7 @@ class Website:
         self.states = {}
         self.streams = set()
         self.inflight = set()
-        self.session_lock = asyncio.Lock()
+        self.session_locks = {}
         self.discord_limits = {}
         self.discord_global_limit = 0
         self.membership_cache = {}
@@ -227,15 +228,33 @@ class Website:
     async def membership(self, session):
         if session['token']['expires_at'] < time.time() + 60:
             session['token'] = await self.token({'grant_type': 'refresh_token', 'refresh_token': session['token']['refresh_token']})
-        member = await self.discord(f"/users/@me/guilds/{self.music.config.GUILD_ID}/member", session['token']['access_token'])
-        user = member['user']
+        if 'user' not in session:
+            member = await self.discord(f"/users/@me/guilds/{self.music.config.GUILD_ID}/member", session['token']['access_token'])
+            user = member['user']
+        else:
+            if not self.music.guild:
+                raise web.HTTPServiceUnavailable(reason='Kirbo is connecting to Discord.')
+            try:
+                # discord.py queues requests and honours Discord's bot rate limits.
+                member = await self.music.guild.fetch_member(int(session['user']['id']))
+            except discord.NotFound:
+                raise web.HTTPForbidden(reason='You must be a member of Team Rocket 2.0 to use Kirbo.') from None
+            except (discord.HTTPException, aiohttp.ClientError, asyncio.TimeoutError):
+                raise web.HTTPServiceUnavailable(reason='Discord verification is temporarily unavailable. Please try again.') from None
+            user = dict(id=str(member.id), username=member.name, avatar=member.avatar.key if member.avatar else None)
+            self.voice_members[member.id] = (time.monotonic() + MEMBERSHIP_TTL, member)
         if int(user['id']) in private.BLACKLISTED_USERS:
             raise web.HTTPForbidden(reason='Access denied.')
         session['user'] = user
         session['checked'] = time.time()
 
     async def session(self, request):
-        async with self.session_lock:
+        row = self.db.execute('SELECT payload FROM sessions WHERE id=?', (digest(request.cookies.get(COOKIE, '')),)).fetchone()
+        if not row:
+            raise web.HTTPUnauthorized(reason='Sign in with Discord to continue.')
+        user_id = json.loads(row[0])['user']['id']
+        lock = self.session_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
             return await self.read_session(request)
 
     async def read_session(self, request):
@@ -257,6 +276,11 @@ class Website:
             self.membership_cache[user_id] = dict(user=session['user'], checked=session['checked'])
         except (web.HTTPForbidden, web.HTTPUnauthorized):
             self.db.execute('DELETE FROM sessions WHERE id=?', (key,))
+            self.db.commit()
+            raise
+        except web.HTTPServiceUnavailable:
+            # A successful token refresh must survive a later membership-service failure.
+            self.db.execute('UPDATE sessions SET payload=? WHERE id=?', (json.dumps(session), key))
             self.db.commit()
             raise
         self.db.execute('UPDATE sessions SET payload=?, expires=? WHERE id=?', (json.dumps(session), time.time() + SESSION_AGE, key))
@@ -322,12 +346,17 @@ class Website:
         event = asyncio.Event()
         self.music.listeners.add(event)
         try:
-            checked = time.monotonic()
             while True:
-                if time.monotonic() - checked > 20:
-                    await self.session(request)
-                    checked = time.monotonic()
                 event.clear()
+                try:
+                    await self.session(request)
+                except web.HTTPServiceUnavailable as error:
+                    await response.write(b'event: verification\ndata: {}\n\n')
+                    await asyncio.sleep(min(20, max(1, float(error.headers.get('Retry-After', 5)))))
+                    continue
+                except (web.HTTPUnauthorized, web.HTTPForbidden):
+                    await response.write(b'event: signed-out\ndata: {}\n\n')
+                    break
                 await response.write(('data: ' + json.dumps(self.music.snapshot()) + '\n\n').encode())
                 try:
                     await asyncio.wait_for(event.wait(), timeout=20)

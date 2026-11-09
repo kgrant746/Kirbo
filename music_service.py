@@ -8,6 +8,7 @@ import random
 import re
 import sqlite3
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -19,6 +20,34 @@ import yt_dlp
 
 ROOT = Path(__file__).parent
 log = logging.getLogger(__name__)
+NORMALIZE_AUDIO = '-vn -af loudnorm=I=-16:TP=-1.5:LRA=11 -ar 48000 -b:a 96k'
+
+
+class PlaybackSource(discord.AudioSource):
+    """Count audio packets and make cleanup safe across Discord's thread and asyncio."""
+    def __init__(self, source):
+        self.source, self.frames = source, 0
+        self.lock = threading.Lock()
+        self.cleaned = False
+
+    def read(self):
+        data = self.source.read()
+        if data:
+            self.frames += 1
+        return data
+
+    def is_opus(self):
+        return self.source.is_opus()
+
+    @property
+    def _current_error(self):
+        return getattr(self.source, '_current_error', None)
+
+    def cleanup(self):
+        with self.lock:
+            if not self.cleaned:
+                self.cleaned = True
+                self.source.cleanup()
 
 
 def validate_query(value):
@@ -132,12 +161,14 @@ class MusicController:
         self.queue, self.current = [], None
         self.loading, self.paused, self.stopping = False, False, False
         self.revision, self.generation = 0, 0
+        self.queue_revision = 0
         self.batch_epoch = 0
         self.search_slots = asyncio.Semaphore(3)
         self.listeners = set()
         self.worker = None
+        self.source = None
+        self.instance = uuid.uuid4().hex
         self.connect_lock = asyncio.Lock()
-        self.tasks = set()
         self.spotify = spotipy.Spotify(auth_manager=spotipy.SpotifyClientCredentials(
             client_id=config.SPOTIFY_CLIENT_ID, client_secret=config.SPOTIFY_CLIENT_SECRET), requests_timeout=20)
 
@@ -149,20 +180,18 @@ class MusicController:
         vc = self.guild.voice_client if self.guild else None
         return dict(queue=self.queue, current=self.current, loading=self.loading, paused=self.paused,
                     channel=vc.channel.name if vc and vc.is_connected() else None,
-                    revision=self.revision, playlists=self.store.playlists(), logs=self.store.logs())
+                    revision=self.revision, queue_revision=self.queue_revision, instance=self.instance,
+                    position=self.source.frames * 0.02 if self.current and self.source else 0,
+                    playlists=self.store.playlists(), logs=self.store.logs())
 
-    def changed(self, actor=None, message=None):
+    def changed(self, actor=None, message=None, *, queue=False):
         if actor and message:
             self.store.activity(str(actor), message)
         self.revision += 1
+        if queue:
+            self.queue_revision += 1
         for event in tuple(self.listeners):
             event.set()
-
-    def background(self, coro):
-        task = asyncio.create_task(coro)
-        self.tasks.add(task)
-        task.add_done_callback(self.tasks.discard)
-        return task
 
     async def connect(self, member):
         if not getattr(member, 'voice', None) or not member.voice.channel:
@@ -221,7 +250,7 @@ class MusicController:
             raise ValueError("The queue is full (1,000 songs).")
         row['added_by'] = actor
         self.queue.insert(0 if next_up else len(self.queue), row)
-        self.changed(actor, f"added {row['title']}" + (" to play next" if next_up else " to the queue"))
+        self.changed(actor, f"added {row['title']}" + (" to play next" if next_up else " to the queue"), queue=True)
         self.kick()
         return row
 
@@ -239,48 +268,79 @@ class MusicController:
                 row = self.queue.pop(0)
                 generation = self.generation
                 self.current, self.loading = row, True
-                self.changed()
-                directory = tempfile.TemporaryDirectory(prefix='kirbo-')
-                stderr = tempfile.TemporaryFile()
+                self.changed(queue=True)
+                directory = stderr = source = None
                 try:
+                    directory = tempfile.TemporaryDirectory(prefix='kirbo-')
+                    stderr = tempfile.TemporaryFile()
+                    if not row['query'].startswith('https://'):
+                        resolved = await self.resolve(row['query'])
+                        if row['title'] == row['query']:
+                            row['title'] = resolved['title']
+                        row['query'] = resolved['query']
+                        row['thumbnail'] = row.get('thumbnail') or resolved['thumbnail']
+                        row['artist'] = row.get('artist') or resolved['artist']
+                    if generation != self.generation or self.stopping:
+                        continue
                     def download():
                         with yt_dlp.YoutubeDL(dict(format='bestaudio/best', noplaylist=True, quiet=True,
                                                   socket_timeout=30, outtmpl=str(Path(directory.name) / '%(id)s.%(ext)s'))) as ydl:
                             info = ydl.extract_info(row['query'], download=True)
-                            return ydl.prepare_filename(info)
-                    filename = await asyncio.to_thread(download)
+                            return ydl.prepare_filename(info), info
+                    filename, info = await asyncio.to_thread(download)
+                    if info.get('duration') is not None:
+                        row['duration'] = info['duration']
+                    row['thumbnail'] = row.get('thumbnail') or info.get('thumbnail')
+                    if row['title'] == row['query']:
+                        row['title'] = info.get('title') or row['title']
                     if generation != self.generation or not vc.is_connected():
                         continue
-                    source = discord.FFmpegOpusAudio(filename, options='-vn -b:a 96k', executable=self.config.FFMPEG_PATH, stderr=stderr)
-                    source.title = row['title']
+                    source = PlaybackSource(discord.FFmpegOpusAudio(filename, options=NORMALIZE_AUDIO,
+                                            executable=self.config.FFMPEG_PATH, stderr=stderr))
+                    self.source = source
                     done = asyncio.get_running_loop().create_future()
                     loop = asyncio.get_running_loop()
-                    def after(error):
+                    def after(error, done=done):
                         def finish():
                             if not done.done():
                                 done.set_result(error)
                         loop.call_soon_threadsafe(finish)
-                    try:
-                        vc.play(source, after=after)
-                        self.loading = False
-                        self.changed('Kirbo', f"started playing {row['title']}")
-                        error = await done
-                        if error:
-                            raise error
-                    finally:
-                        source.cleanup()
-                    stderr.seek(0)
-                    detail = stderr.read().decode(errors='replace')
-                    if 'Error' in detail or '403' in detail:
-                        log.warning('FFmpeg: %s', re.sub(r'https?://\S+', '[stream URL]', detail)[-2000:])
+                    vc.play(source, after=after)
+                    self.loading = False
+                    self.changed('Kirbo', f"started playing {row['title']}")
+                    while not done.done():
+                        try:
+                            await asyncio.wait_for(asyncio.shield(done), timeout=1)
+                        except asyncio.TimeoutError:
+                            if not vc.is_connected() or not (vc.is_playing() or vc.is_paused()):
+                                break
+                    if done.done() and done.result():
+                        raise done.result()
                 except Exception:
                     log.exception('Track playback failed')
                     self.changed('Kirbo', f"could not play {row['title']}; skipped it")
                 finally:
-                    stderr.close()
-                    directory.cleanup()
                     self.current, self.loading, self.paused = None, False, False
+                    self.source = None
                     self.changed()
+                    try:
+                        if source:
+                            await asyncio.to_thread(source.cleanup)
+                        if stderr:
+                            stderr.seek(0)
+                            detail = stderr.read().decode(errors='replace')
+                            if 'Error' in detail or '403' in detail:
+                                log.warning('FFmpeg: %s', re.sub(r'https?://\S+', '[stream URL]', detail)[-2000:])
+                    except Exception:
+                        log.exception('Audio cleanup failed after clearing playback state')
+                    finally:
+                        if stderr:
+                            stderr.close()
+                        if directory:
+                            try:
+                                directory.cleanup()
+                            except OSError:
+                                log.warning('Could not remove a temporary audio file')
         finally:
             self.worker = None
             if self.queue and not self.stopping and self.guild and self.guild.voice_client:
@@ -298,7 +358,7 @@ class MusicController:
             if vc:
                 vc.stop()
                 await vc.disconnect()
-            self.current, self.paused = None, False
+            self.current, self.source, self.loading, self.paused = None, None, False, False
         elif action == 'skip':
             self.generation += 1
             if vc:
@@ -316,21 +376,21 @@ class MusicController:
             self.queue.clear()
         else:
             raise ValueError("That playback action is unavailable right now.")
-        self.changed(actor, f"used {action}")
+        self.changed(actor, f"used {action}", queue=action in {'stop', 'shuffle', 'clear'})
 
     def remove(self, ident, actor):
         row = next((r for r in self.queue if r['id'] == ident), None)
         if not row:
             raise ValueError("That song has already left the queue.")
         self.queue.remove(row)
-        self.changed(actor, f"removed {row['title']} from the queue")
+        self.changed(actor, f"removed {row['title']} from the queue", queue=True)
 
     def reorder(self, ids, revision, actor):
-        if revision != self.revision or len(ids) != len(self.queue) or set(ids) != {r['id'] for r in self.queue}:
+        if revision != self.queue_revision or len(ids) != len(self.queue) or set(ids) != {r['id'] for r in self.queue}:
             raise ValueError("The queue changed while you were dragging. Try again on the updated queue.")
         by_id = {r['id']: r for r in self.queue}
         self.queue = [by_id[i] for i in ids]
-        self.changed(actor, 'reordered the queue')
+        self.changed(actor, 'reordered the queue', queue=True)
 
     async def spotify_rows(self, url):
         parsed = urlparse(url)
@@ -354,30 +414,24 @@ class MusicController:
         return await asyncio.to_thread(fetch)
 
     async def enqueue_playlist(self, rows, member, actor, shuffle=False):
+        if not rows:
+            raise ValueError('That playlist is empty.')
         if shuffle:
             rows = random.sample(rows, len(rows))
         await self.connect(member)
-        epoch = self.batch_epoch
-        async def fill():
-            for row in rows:
-                if self.stopping or epoch != self.batch_epoch:
-                    break
-                if not member.voice or not member.voice.channel:
-                    self.changed('Kirbo', 'stopped adding playlist songs because the requester left voice')
-                    break
-                try:
-                    if len(self.queue) >= 1000:
-                        break
-                    await self.add(row['query'], member, actor)
-                except Exception:
-                    self.changed('Kirbo', f"could not queue {row['title']}; skipped it")
-            self.changed('Kirbo', 'finished adding playlist songs')
-        self.background(fill())
+        if len(self.queue) + len(rows) > 1000:
+            raise ValueError('There is not enough room for this playlist in the queue (1,000 songs maximum).')
+        added = []
+        for original in rows:
+            row = track(original['query'], original.get('title'), original.get('duration'), original.get('thumbnail'))
+            row.update(artist=original.get('artist', ''), added_by=actor)
+            added.append(row)
+        self.queue.extend(added)
+        self.changed(actor, f'added {len(added)} playlist songs to the queue', queue=True)
+        self.kick()
 
     async def close(self):
         await self.control('stop', 'Kirbo')
-        if self.tasks:
-            await asyncio.gather(*self.tasks, return_exceptions=True)
         if self.worker:
             await self.worker
         self.store.db.close()

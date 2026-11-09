@@ -251,7 +251,8 @@
               ><small>Join a voice channel and add a song</small>
             </div>
           </div>
-          <div class="player-controls">
+          <div class="player-center">
+            <div class="player-controls">
             <button
               id="pause-button"
               class="play-button"
@@ -260,18 +261,25 @@
             >
               Ⅱ</button
             ><button
+              id="skip-button"
               class="icon-button"
               data-control="skip"
               aria-label="Skip current song"
             >
-              ▸│</button
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 4 11 8-11 8zm12 0h3v16h-3z"/></svg></button
             ><button
               class="icon-button"
               data-control="stop"
               aria-label="Stop and disconnect"
             >
-              ■
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>
             </button>
+            </div>
+            <div class="playback-timeline">
+              <span id="elapsed">0:00</span>
+              <div id="song-progress" class="song-progress" role="progressbar" aria-label="Song progress" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><div id="progress-fill"></div></div>
+              <span id="remaining">0:00</span>
+            </div>
           </div>
           <div class="player-status">
             <span class="status-dot"></span

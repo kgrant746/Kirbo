@@ -82,7 +82,7 @@ def setup_music(bot):
                 raise ValueError('That playlist is empty.')
             await music.enqueue_playlist(rows, interaction.user, interaction.user.name, shuffle)
             music.changed(interaction.user.name, f'queued playlist {source}')
-            await interaction.edit_original_response(content=f'Adding **{len(rows)}** playlist songs to the queue.')
+            await interaction.edit_original_response(content=f'Added **{len(rows)}** playlist songs to the queue.')
         except Exception as error:
             await interaction.edit_original_response(content=str(error)[:1800])
     return music

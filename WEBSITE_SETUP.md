@@ -47,9 +47,11 @@ Cloudflared runs as the Windows service installed above; you do not start anothe
 - Users must join Kirbo’s Discord voice channel for playback controls. All authorised server members can edit shared queues and playlists. The website implements the music, playlist and activity features requested; moderation and casino commands remain available through Discord.
 - A random HttpOnly session cookie remembers a browser for 90 days, renewed when it visits again. OAuth tokens remain on the bot computer and are refreshed automatically. Discord revocation, removed membership, cleared browser cookies, or deleted session storage can require sign-in again; permanent login cannot be guaranteed.
 - Every protected request requires a valid session and successful membership verification from within the last 30 seconds. Open event streams recheck periodically. A removed member can retain access for the remainder of that cache window; after expiry, failed verification blocks commands. This bounded cache allows rapid queue additions without a Discord API request per click.
+- Initial sign-in uses Discord OAuth. Subsequent membership checks use the running bot through discord.py, which handles Discord's rate limits automatically. Checks for different users run independently. A temporary verification failure pauses private updates until verification succeeds; it does not disable authentication or permanently break the live stream.
 - Saved `.txt` playlists are imported once into `data/controller.sqlite3`; originals are preserved. After migration, edit playlists through the website. `/playlist christmas.txt` still finds the imported `christmas` playlist. Back up the SQLite database with the bot stopped, or use SQLite’s backup tool. It contains playlists, recent activity and private login tokens. Keep `data/` private and out of Git.
 - Queue rows waiting to play can be reordered or removed. The current track is pinned above them; use Skip to remove the active track. Right-click playlist songs to queue, play next, edit or remove them. Alt+Up/Down also reorders a focused row.
 - Spotify imports save song references and metadata; Kirbo still finds and plays corresponding YouTube audio. Only playlists accessible to your configured Spotify application can be imported. Spotify application restrictions may reject some playlists.
+- Adding a playlist puts its songs into the shared queue together. YouTube search and download happen as each track reaches playback. All tracks, including slash commands and playlists, use FFmpeg's `loudnorm` filter with a −16 LUFS target and −1.5 dB true-peak ceiling. The footer shows elapsed and remaining playback time; its progress bar does not seek.
 - Queue and current playback live in memory and reset on restart. Playlist and log changes persist. Concurrent reorder or playlist edits are checked for conflicts so a stale browser cannot silently overwrite someone else’s edit.
 
 ## Local testing and troubleshooting
@@ -59,6 +61,8 @@ For localhost-only sign-in testing, register `http://127.0.0.1:8080/auth/callbac
 “Sign-in not configured”: check both OAuth variables on the **bot computer**. “Invalid redirect”: the portal redirect and `WEB_PUBLIC_URL` must match exactly. A tunnel 502 generally means the bot/web server is not listening on port 8080. If Spotify returns an error, check its credentials and application playlist permissions. Never post tokens, the `.env`, or the database in troubleshooting logs.
 
 Run automated checks with `venv\Scripts\python.exe -m unittest discover -s tests -v`.
+
+For browser regression checks, run `venv\Scripts\python.exe tests\preview_frontend.py` and open `http://127.0.0.1:8081`. The isolated page uses fake users and playback data, runs checks for thumbnail stability, playlist updates, drag rollback and numbering, pause/progress, idle state and bot restarts, and reports PASS or FAIL in the browser console. It does not start the real bot or read credentials. Stop this preview with Ctrl+C when finished.
 
 ### Playlist artwork
 

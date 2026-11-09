@@ -1,6 +1,11 @@
 import asyncio
 import json
 import io
+import array
+import math
+import shlex
+import shutil
+import subprocess
 import importlib.util
 import sys
 import tempfile
@@ -13,7 +18,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 
-from music_service import MusicController, Store, track, validate_query
+from music_service import MusicController, PlaybackSource, NORMALIZE_AUDIO, Store, track, validate_query
 from web.app import Website, cover_image, digest, MAX_COVER_BYTES
 
 
@@ -34,6 +39,47 @@ class CoverImageTests(unittest.TestCase):
             opened.return_value.__enter__.return_value = SimpleNamespace(format='PNG', width=6000, height=5000)
             with self.assertRaisesRegex(ValueError, '25 megapixels'):
                 cover_image(b'header')
+
+
+class AudioTests(unittest.TestCase):
+    def test_progress_counts_audio_packets_and_cleanup_runs_once(self):
+        underlying = Mock()
+        underlying.read.side_effect = [b'packet', b'packet', b'']
+        underlying.is_opus.return_value = True
+        source = PlaybackSource(underlying)
+        self.assertEqual(source.read(), b'packet')
+        self.assertEqual(source.read(), b'packet')
+        self.assertEqual(source.read(), b'')
+        self.assertEqual(source.frames * 0.02, 0.04)
+        self.assertTrue(source.is_opus())
+        source.cleanup()
+        source.cleanup()
+        underlying.cleanup.assert_called_once()
+
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'FFmpeg is not installed on this computer')
+    def test_loud_and_quiet_sources_reach_consistent_volume(self):
+        levels = []
+        for gain in (0.03, 0.8):
+            result = subprocess.run([shutil.which('ffmpeg'), '-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
+                '-i', f'sine=frequency=440:duration=5,volume={gain}', *shlex.split(NORMALIZE_AUDIO),
+                '-ac', '1', '-c:a', 'pcm_f32le', '-f', 'f32le', 'pipe:1'], capture_output=True, check=True, timeout=20)
+            samples = array.array('f', result.stdout)
+            rms = math.sqrt(sum(value * value for value in samples) / len(samples))
+            self.assertGreater(rms, 0.05)
+            self.assertLess(max(abs(value) for value in samples), 1)
+            levels.append(rms)
+        self.assertLess(abs(20 * math.log10(levels[0] / levels[1])), 1)
+
+
+class FakeDownloader:
+    def __init__(self, options):
+        self.filename = options['outtmpl'].replace('%(id)s', 'test').replace('%(ext)s', 'webm')
+    def __enter__(self): return self
+    def __exit__(self, *_): pass
+    def extract_info(self, url, download):
+        Path(self.filename).write_bytes(b'audio')
+        return {'duration': 120}
+    def prepare_filename(self, info): return self.filename
 
 
 class StoreTests(unittest.TestCase):
@@ -134,12 +180,35 @@ class ControllerTests(ControllerCase):
     async def test_reorder_conflict_does_not_drop_simultaneously_added_song(self):
         a, b, c = track('a'), track('b'), track('c')
         self.music.queue = [a, b]
-        revision = self.music.revision
+        revision = self.music.queue_revision
         self.music.queue.append(c)
-        self.music.changed('friend', 'added c')
+        self.music.changed('friend', 'added c', queue=True)
         with self.assertRaises(ValueError):
             self.music.reorder([b['id'], a['id']], revision, 'old browser')
         self.assertEqual(self.music.queue, [a, b, c])
+
+    async def test_background_metadata_updates_do_not_reject_queue_reordering(self):
+        a, b = track('a'), track('b')
+        self.music.queue = [a, b]
+        revision = self.music.queue_revision
+        self.music.changed('Kirbo', 'updated artwork')
+        self.music.reorder([b['id'], a['id']], revision, 'friend')
+        self.assertEqual(self.music.queue, [b, a])
+        with self.assertRaises(ValueError):
+            self.music.reorder([a['id'], b['id']], revision, 'stale browser')
+
+    async def test_whole_playlist_appears_immediately_without_individual_searches(self):
+        self.music.resolve = AsyncMock()
+        self.music.kick = Mock()
+        rows = [track(f'song {i}', thumbnail='https://example.com/thumb.jpg') for i in range(20)]
+        member = SimpleNamespace(voice=SimpleNamespace(channel=self.vc.channel))
+        await self.music.enqueue_playlist(rows, member, 'friend')
+        self.assertEqual(len(self.music.snapshot()['queue']), 20)
+        self.assertEqual([r['query'] for r in self.music.queue], [r['query'] for r in rows])
+        self.assertTrue(all(r['added_by'] == 'friend' for r in self.music.queue))
+        self.assertTrue(set(r['id'] for r in rows).isdisjoint(r['id'] for r in self.music.queue))
+        self.music.resolve.assert_not_awaited()
+        self.music.kick.assert_called_once()
 
     async def test_discord_and_browser_share_events_and_queue(self):
         self.music.resolve = AsyncMock(return_value=track('song', 'Current song'))
@@ -185,7 +254,7 @@ class ControllerTests(ControllerCase):
             callback = after
             started.set()
         self.vc.play = play
-        self.music.queue = [track('test', 'Test track')]
+        self.music.queue = [track('https://youtu.be/4tk1He_HFjE', 'Test track')]
         with patch('music_service.yt_dlp.YoutubeDL', Downloader), patch('music_service.discord.FFmpegOpusAudio', return_value=SimpleNamespace(cleanup=lambda:None)) as ffmpeg:
             self.music.kick()
             worker = self.music.worker
@@ -193,12 +262,38 @@ class ControllerTests(ControllerCase):
             self.assertEqual(self.music.current['title'], 'Test track')
             self.assertTrue(Path(paths[0]).exists())
             self.assertEqual(ffmpeg.call_args.args[0], paths[0])
+            self.assertIn('loudnorm=I=-16:TP=-1.5:LRA=11', ffmpeg.call_args.kwargs['options'])
             callback(None)
             await asyncio.wait_for(worker, 3)
         self.assertFalse(Path(paths[0]).exists())
         self.assertIsNone(self.music.current)
         self.assertEqual(self.music.snapshot()['queue'], [])
         self.assertIsNone(self.music.snapshot()['current'])
+
+    async def test_cleanup_errors_cannot_leave_a_stale_current_track_or_block_the_next(self):
+        self.music.queue = [track('https://youtu.be/4tk1He_HFjE'), track('https://youtu.be/4tk1He_HFjE')]
+        self.vc.play = lambda source, after: after(None)
+        cleared = []
+        def cleanup():
+            cleared.append(self.music.current is None)
+            raise OSError('File still in use')
+        with patch('music_service.yt_dlp.YoutubeDL', FakeDownloader), patch('music_service.discord.FFmpegOpusAudio', return_value=SimpleNamespace(cleanup=cleanup)):
+            with self.assertLogs('music_service', level='ERROR'):
+                await self.music.advance()
+        self.assertEqual(cleared, [True, True])
+        self.assertIsNone(self.music.snapshot()['current'])
+        self.assertEqual(self.music.snapshot()['position'], 0)
+        self.assertFalse(self.music.queue)
+
+    async def test_missing_discord_completion_callback_still_clears_idle_player(self):
+        self.music.queue = [track('https://youtu.be/4tk1He_HFjE')]
+        self.vc.play = lambda *args, **kwargs: None
+        self.vc.is_playing = lambda: False
+        with patch('music_service.yt_dlp.YoutubeDL', FakeDownloader), patch('music_service.discord.FFmpegOpusAudio', return_value=SimpleNamespace(cleanup=lambda: None)):
+            await asyncio.wait_for(self.music.advance(), 3)
+        self.assertIsNone(self.music.current)
+        self.assertFalse(self.music.loading)
+        self.assertFalse(self.music.queue)
 
     async def test_all_music_slash_commands_register_on_shared_controller(self):
         import discord
@@ -419,6 +514,79 @@ class WebSecurityTests(ControllerCase):
         self.assertEqual(len(self.music.queue), 20)
         self.site.membership.assert_not_awaited()
         self.guild.fetch_member.assert_awaited_once()
+
+    async def test_expired_membership_uses_the_bot_instead_of_repeating_oauth_requests(self):
+        self.expire_membership()
+        payload = json.loads(self.store.db.execute('SELECT payload FROM sessions WHERE id=?', (digest('test-cookie'),)).fetchone()[0])
+        payload['token'] = {'expires_at': time.time()+3600, 'access_token': 'test-token'}
+        self.store.db.execute('UPDATE sessions SET payload=? WHERE id=?', (json.dumps(payload), digest('test-cookie')))
+        self.store.db.commit()
+        self.site.membership = Website.membership.__get__(self.site)
+        member = SimpleNamespace(id=12345, name='friend', avatar=None, voice=SimpleNamespace(channel=self.vc.channel))
+        self.guild.fetch_member = AsyncMock(return_value=member)
+        self.site.discord = AsyncMock(side_effect=AssertionError('Repeated OAuth membership request'))
+        self.music.kick = lambda: None
+        self.music.resolve = AsyncMock(side_effect=lambda query: track(query))
+        for i in range(10):
+            response = await self.client.post('/api/action', json={'action':'add', 'query':f'song {i}'}, headers=self.headers)
+            self.assertEqual(response.status, 200, await response.text())
+        self.guild.fetch_member.assert_awaited_once_with(12345)
+        self.site.discord.assert_not_awaited()
+
+    async def test_one_users_pending_membership_check_does_not_block_another_user(self):
+        self.expire_membership()
+        other = dict(user={'id':'67890', 'username':'other'}, csrf='other', checked=0, token={})
+        self.store.db.execute('INSERT INTO sessions VALUES(?,?,?)', (digest('other-cookie'), json.dumps(other), time.time()+300))
+        self.store.db.commit()
+        started, release = asyncio.Event(), asyncio.Event()
+        async def verify(session):
+            if session['user']['id'] == '12345':
+                started.set()
+                await release.wait()
+            session['checked'] = time.time()
+        self.site.membership.side_effect = verify
+        pending = asyncio.create_task(self.client.get('/api/state', headers=self.headers))
+        await asyncio.wait_for(started.wait(), 2)
+        try:
+            other_response = await asyncio.wait_for(self.client.get('/api/state', headers={'Cookie':'kirbo_session=other-cookie'}), 2)
+            self.assertEqual(other_response.status, 200)
+        finally:
+            release.set()
+            self.assertEqual((await pending).status, 200)
+
+    async def test_live_updates_resume_after_temporary_verification_failure(self):
+        from aiohttp import web
+        events = await self.client.get('/api/events', headers=self.headers)
+        await events.content.readline()
+        await events.content.readline()
+        self.expire_membership()
+        calls = 0
+        async def verify(session):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise web.HTTPServiceUnavailable(headers={'Retry-After':'0'})
+            session['checked'] = time.time()
+        self.site.membership.side_effect = verify
+        self.music.changed('friend', 'updated the queue')
+        self.assertEqual(await asyncio.wait_for(events.content.readline(), 2), b'event: verification\n')
+        self.assertEqual(await events.content.readline(), b'data: {}\n')
+        await events.content.readline()
+        self.assertIn(b'updated the queue', await asyncio.wait_for(events.content.readline(), 3))
+        self.assertEqual(calls, 2)
+        events.close()
+
+    async def test_removed_member_stream_stops_without_sending_more_private_data(self):
+        from aiohttp import web
+        events = await self.client.get('/api/events', headers=self.headers)
+        await events.content.readline()
+        await events.content.readline()
+        self.expire_membership()
+        self.site.membership.side_effect = web.HTTPForbidden(reason='Removed member')
+        self.music.changed('friend', 'private event')
+        self.assertEqual(await asyncio.wait_for(events.content.readline(), 2), b'event: signed-out\n')
+        self.assertEqual(await events.content.readline(), b'data: {}\n')
+        events.close()
 
     async def test_two_users_can_submit_songs_concurrently(self):
         other_session = dict(user={'id':'67890','username':'other friend','avatar':None}, csrf='other-csrf', checked=time.time(), token={})
