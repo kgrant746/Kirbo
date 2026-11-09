@@ -2,19 +2,39 @@
 
 The bot and website run together on the computer that normally runs Kirbo. Push this repository, pull it on that computer, then follow these steps there. The domain is prepared in the code, but DNS and Discord settings require your accounts.
 
+## Updating an existing installation: security and Discord profile
+
+1. On the development computer, commit and push these changes to GitHub.
+2. On the bot computer, press **Ctrl+C** in Kirbo’s terminal to stop it before updating packages.
+3. Pull the updated repository on the bot computer. If using CMD in the bot folder, run `git pull`.
+4. Double-click **start_bot.bat**. It installs the patched dependency minimums and starts the bot and website together. No new `.env` variables, OAuth redirects or Discord permissions are required.
+5. Open Kirbo’s Discord profile. Its description should include `https://kirbo.bot`; during playback its activity should say **Listening to [song title]**. Close and reopen the profile if Discord is displaying cached information.
+
+The startup code adds `Music controller: https://kirbo.bot` to the existing application description without replacing its other text. If the console says it could not update the description, open [Discord Developer Portal](https://discord.com/developers/applications), select **Kirbo**, choose **General Information**, find **Description**, add the following line, and click **Save Changes**:
+
+```text
+Music controller: https://kirbo.bot
+```
+
+The presence follows the same music player used by slash commands and the website. It clears while paused, loading or idle, and returns on resume. Rapid changes are combined to respect Discord's presence limits; music playback does not wait for presence updates. Discord only lets bots set basic activity fields, so this is a listening activity rather than Spotify’s full cover-art, progress and Listen Along card. See [Discord's activity restrictions](https://docs.discord.com/developers/events/gateway-events#activity-object).
+
+No Cloudflare dashboard change is required for the fixes in this update. The existing HTTP-to-HTTPS redirect was verified on November 9, 2026. The application now sends HSTS itself on HTTPS deployments, including event streams; it covers this hostname without enabling subdomain coverage or preload. Keep HTTPS and the tunnel enabled. HSTS tells browsers to require HTTPS for six months after a response, so disabling HTTPS would prevent those browsers from connecting.
+
+The application disables incoming compressed request bodies, enforces patched Brotli and certifi versions, and rate-limits only **sign-in attempts**, not queue additions or reordering. Behind the local Cloudflare connector, login limiting uses Cloudflare's visitor address. The HTTP listener is restricted to loopback: if startup reports a `WEB_BIND` error, set `WEB_BIND=127.0.0.1` in the bot computer's `.env` and rerun the batch file. Keep the HTTP port closed to direct Internet access. These measures address the audited weaknesses; Cloudflare's edge protections remain important for large distributed traffic floods.
+
 ## 1. Configure Discord sign-in
 
 Open [Discord Developer Portal](https://discord.com/developers/applications), select **Kirbo**, and open **OAuth2**.
 
 - Copy the Application/Client ID and OAuth2 Client Secret into the bot computer’s `.env` as `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET`. The client secret is different from the bot token.
-- Under Redirects, add exactly `https://bigboicucks.org/auth/callback` and save.
+- Under Redirects, add exactly `https://kirbo.bot/auth/callback` and save.
 - Keep `GUILD_ID` set to Team Rocket 2.0. No extra bot invite or new bot account is needed.
 
 Add these settings to the existing `.env` (keep its bot and Spotify settings):
 
 ```dotenv
 WEB_ENABLED=true
-WEB_PUBLIC_URL=https://bigboicucks.org
+WEB_PUBLIC_URL=https://kirbo.bot
 WEB_BIND=127.0.0.1
 WEB_PORT=8080
 DISCORD_CLIENT_ID=your_application_id
@@ -25,13 +45,13 @@ Requested OAuth permissions are identity and membership information for the conf
 
 ## 2. Point your domain at the bot computer
 
-Recommended: a **Cloudflare Tunnel**, which provides HTTPS without opening a router port. It must run on the bot computer. If another website currently uses `bigboicucks.org`, publishing Kirbo at that hostname replaces its route; retain any unrelated DNS records.
+Recommended: a **Cloudflare Tunnel**, which provides HTTPS without opening a router port. It must run on the bot computer. If another website currently uses `kirbo.bot`, publishing Kirbo at that hostname replaces its route; retain any unrelated DNS records.
 
-1. Add `bigboicucks.org` to your Cloudflare account. If its DNS is hosted elsewhere, follow Cloudflare’s instructions to change the domain’s nameservers at your registrar. Copy all existing DNS records, especially email records.
+1. Add `kirbo.bot` to your Cloudflare account. If its DNS is hosted elsewhere, follow Cloudflare’s instructions to change the domain’s nameservers at your registrar. Copy all existing DNS records, especially email records.
 2. In Cloudflare’s dashboard, open **Networking → Tunnels** (sometimes under Zero Trust / Networks / Connectors), create a tunnel called `kirbo`, and select Windows.
 3. Install `cloudflared` on the bot computer and run the **service installation command shown by Cloudflare** in an administrator terminal. Its tunnel token is secret; do not commit it or paste it into the website source. As a Windows service, it starts automatically when the computer starts.
-4. Add a **Published application route / Public hostname** for `bigboicucks.org`, with an empty subdomain and service **HTTP → localhost:8080**. Do not add a Cloudflare Access login gate: Kirbo already requires Discord login.
-5. Run `start_bot.bat`, then open **https://bigboicucks.org**. Sign in using a Team Rocket 2.0 account. Check a non-member account is denied too.
+4. Add a **Published application route / Public hostname** for `kirbo.bot`, with an empty subdomain and service **HTTP → localhost:8080**. Kirbo provides Discord sign-in and membership checks; a separate Cloudflare Access gate is optional.
+5. Run `start_bot.bat`, then open **https://kirbo.bot**. Sign in using a Team Rocket 2.0 account. Check a non-member account is denied too.
 
 Cloudflare’s [tunnel setup guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/) explains the current dashboard and connector installation. Allow event streams through any additional proxy; disable buffering/caching for `/api/*` and `/auth/*`. Keep Cloudflare caching set to the normal default, not “cache everything.”
 

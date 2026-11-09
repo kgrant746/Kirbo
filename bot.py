@@ -5,6 +5,7 @@ from discord.ext import commands, tasks
 import command_handler
 from task_manager import holiday_check, run_holiday_check, nightly_update, set_channel_name
 import curseforge_check
+from discord_profile import DiscordProfile
 
 # TO UPDATE DEPENDENCIES: pip install -r requirements.txt --upgrade
 
@@ -16,10 +17,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 command_handler.setup_all(bot)
 music.setup_music(bot)
+profile = DiscordProfile(bot, bot.music)
 
 
 @bot.event
 async def on_ready():
+    profile.start()
+    await profile.update_description()
     guild = discord.Object(id=config.GUILD_ID)
     synced = await bot.tree.sync(guild=guild)
     print(f"{bot.user} online - synced {len(synced)} command(s) to guild {guild.id!r}")
@@ -50,6 +54,7 @@ async def main():
                 runner = await start(bot.music)
             await bot.start(config.TOKEN)
         finally:
+            await profile.close()
             if runner:
                 await runner.cleanup()
             await bot.music.close()

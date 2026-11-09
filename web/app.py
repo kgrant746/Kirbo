@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import html
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ import re
 import secrets
 import time
 from pathlib import Path
+from collections import OrderedDict
 from urllib.parse import urlencode
 
 import aiohttp
@@ -25,6 +27,27 @@ SESSION_AGE = 90 * 86400
 MEMBERSHIP_TTL = 30
 MAX_COVER_BYTES = 5 * 1024 * 1024
 CREATOR_ID = 227126966287859713
+LOGIN_WINDOW = 60
+LOGIN_ATTEMPTS = 10
+MAX_PENDING_LOGINS = 2000
+
+
+def login_address(request):
+    """Only the loopback Cloudflare connector may supply the visitor address."""
+    try:
+        peer = ipaddress.ip_address(request.remote or '')
+    except ValueError:
+        return 'unknown'
+    peer = getattr(peer, 'ipv4_mapped', None) or peer
+    if peer.is_loopback and request.headers.get('CF-Connecting-IP'):
+        try:
+            peer = ipaddress.ip_address(request.headers['CF-Connecting-IP'])
+        except ValueError:
+            pass
+    peer = getattr(peer, 'ipv4_mapped', None) or peer
+    if peer.version == 6 and not peer.is_loopback:
+        return str(ipaddress.ip_network((peer, 64), strict=False))
+    return str(peer)
 
 
 def cover_image(data):
@@ -58,7 +81,7 @@ class Website:
     def __init__(self, controller):
         self.music = controller
         self.db = controller.store.db
-        self.origin = os.getenv('WEB_PUBLIC_URL', 'https://bigboicucks.org').rstrip('/')
+        self.origin = os.getenv('WEB_PUBLIC_URL', 'https://kirbo.bot').rstrip('/')
         self.secure = self.origin.startswith('https://')
         if not self.secure and self.origin not in {'http://127.0.0.1:8080', 'http://localhost:8080'}:
             raise ValueError('WEB_PUBLIC_URL must use HTTPS, except on localhost:8080.')
@@ -66,6 +89,7 @@ class Website:
         self.secret = os.getenv('DISCORD_CLIENT_SECRET', '')
         self.redirect = self.origin + '/auth/callback'
         self.states = {}
+        self.login_attempts = OrderedDict()
         self.streams = set()
         self.inflight = set()
         self.session_locks = {}
@@ -77,7 +101,8 @@ class Website:
         self.creator_avatar_expires = 0
         self.creator_avatar_lock = asyncio.Lock()
         self.artwork_tasks = set()
-        self.app = web.Application(middlewares=[self.guard], client_max_size=MAX_COVER_BYTES)
+        self.app = web.Application(middlewares=[self.guard], client_max_size=MAX_COVER_BYTES,
+                                   handler_args={'auto_decompress': False})
         self.app.add_routes([
             web.get('/', self.index), web.get('/auth/login', self.login),
             web.get('/auth/callback', self.callback), web.get('/api/me', self.me),
@@ -90,6 +115,7 @@ class Website:
         self.app.on_startup.append(self.open)
         self.app.on_cleanup.append(self.close)
         self.app.on_shutdown.append(self.shutdown)
+        self.app.on_response_prepare.append(self.security_headers)
 
     async def open(self, app):
         self.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20))
@@ -153,6 +179,8 @@ class Website:
     @web.middleware
     async def guard(self, request, handler):
         try:
+            if request.headers.get('Content-Encoding', 'identity').lower() != 'identity':
+                raise web.HTTPUnsupportedMediaType(reason='Compressed request bodies are not supported.')
             if request.path.startswith('/api/'):
                 if request.method != 'GET' and request.headers.get('Origin') != self.origin:
                     raise web.HTTPForbidden(reason='Invalid request origin')
@@ -172,14 +200,19 @@ class Website:
         except Exception:
             logging.exception('Website request failed')
             response = web.json_response({'error': 'Request failed. Check the bot console or try again.'}, status=500)
+        if request.path == '/api/me' and response.status == 200 and request.cookies.get(COOKIE):
+            response.set_cookie(COOKIE, request.cookies[COOKIE], max_age=SESSION_AGE, secure=self.secure, httponly=True, samesite='Lax')
+        return response
+
+    async def security_headers(self, request, response):
+        # Run before headers are sent, including on the live event stream.
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
         response.headers['X-Frame-Options'] = 'DENY'
         response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' https: data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         response.headers['Cache-Control'] = 'no-store' if not request.path.startswith('/static/') else 'no-cache'
-        if request.path == '/api/me' and response.status == 200 and request.cookies.get(COOKIE):
-            response.set_cookie(COOKIE, request.cookies[COOKIE], max_age=SESSION_AGE, secure=self.secure, httponly=True, samesite='Lax')
-        return response
+        if self.secure:
+            response.headers['Strict-Transport-Security'] = 'max-age=15552000'
 
     async def discord(self, path, token):
         key = (digest(token), path)
@@ -297,10 +330,23 @@ class Website:
     async def login(self, request):
         if not self.client_id or not self.secret:
             raise web.HTTPServiceUnavailable(reason='Discord website sign-in has not been configured. See WEBSITE_SETUP.md.')
+        now = time.monotonic()
+        while self.login_attempts and now - next(iter(self.login_attempts.values()))[0] >= LOGIN_WINDOW:
+            self.login_attempts.popitem(last=False)
+        address = login_address(request)
+        started, attempts = self.login_attempts.get(address, (now, 0))
+        if attempts >= LOGIN_ATTEMPTS:
+            raise web.HTTPTooManyRequests(reason='Too many sign-in attempts. Please wait before trying again.',
+                headers={'Retry-After': str(max(1, int(started + LOGIN_WINDOW - now) + 1))})
+        self.login_attempts[address] = (started, attempts + 1)
+        if len(self.login_attempts) > 4096:
+            self.login_attempts.popitem(last=False)
         self.states = {key: expiry for key, expiry in self.states.items() if expiry > time.time()}
-        if len(self.states) > 2000:
-            raise web.HTTPTooManyRequests()
-        state = secrets.token_urlsafe(32)
+        state = request.cookies.get('kirbo_oauth', '')
+        if not state or digest(state) not in self.states:
+            if len(self.states) >= MAX_PENDING_LOGINS:
+                self.states.pop(next(iter(self.states)))
+            state = secrets.token_urlsafe(32)
         self.states[digest(state)] = time.time() + 600
         response = web.HTTPFound('https://discord.com/oauth2/authorize?' + urlencode(dict(
             client_id=self.client_id, redirect_uri=self.redirect, response_type='code',
@@ -480,9 +526,12 @@ class Website:
 
 
 async def start(controller):
+    bind = os.getenv('WEB_BIND', '127.0.0.1')
+    if bind not in {'127.0.0.1', '::1', 'localhost'}:
+        raise ValueError('WEB_BIND must be a loopback address. Publish Kirbo through Cloudflare Tunnel.')
     site = Website(controller)
     runner = web.AppRunner(site.app)
     await runner.setup()
-    await web.TCPSite(runner, os.getenv('WEB_BIND', '127.0.0.1'), int(os.getenv('WEB_PORT', '8080'))).start()
-    logging.getLogger(__name__).info('Kirbo website listening on 127.0.0.1:%s', os.getenv('WEB_PORT', '8080'))
+    await web.TCPSite(runner, bind, int(os.getenv('WEB_PORT', '8080'))).start()
+    logging.getLogger(__name__).info('Kirbo website listening on %s:%s', bind, os.getenv('WEB_PORT', '8080'))
     return runner

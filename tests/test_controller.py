@@ -19,7 +19,8 @@ from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 
 from music_service import MusicController, PlaybackSource, NORMALIZE_AUDIO, Store, track, validate_query
-from web.app import Website, cover_image, digest, MAX_COVER_BYTES, CREATOR_ID
+from web.app import (Website, cover_image, digest, MAX_COVER_BYTES, CREATOR_ID,
+                     LOGIN_ATTEMPTS, LOGIN_WINDOW, MAX_PENDING_LOGINS, login_address, start)
 
 
 class CoverImageTests(unittest.TestCase):
@@ -470,6 +471,65 @@ class WebSecurityTests(ControllerCase):
     async def test_oauth_callback_rejects_forged_state(self):
         response = await self.client.get('/auth/callback?code=fake&state=fake')
         self.assertEqual(response.status,403)
+
+    async def test_compressed_requests_never_reach_the_decoder(self):
+        import brotli
+        from aiohttp.http_parser import BrotliDecompressor
+        with patch.object(BrotliDecompressor, 'decompress_sync', side_effect=AssertionError('Decoder must not run')) as decode:
+            response = await self.client.post('/api/action', data=brotli.compress(b'{"action":"clear"}'),
+                headers={'Content-Encoding':'br', 'Origin':self.site.origin})
+        self.assertEqual(response.status, 415)
+        decode.assert_not_called()
+
+    async def test_login_flood_cannot_block_a_different_visitor_or_music_commands(self):
+        self.site.client_id, self.site.secret = 'test-id', 'test-secret'
+        for _ in range(LOGIN_ATTEMPTS):
+            response = await self.client.get('/auth/login', allow_redirects=False, headers={'CF-Connecting-IP':'192.0.2.1'})
+            self.assertEqual(response.status, 302)
+        response = await self.client.get('/auth/login', allow_redirects=False, headers={'CF-Connecting-IP':'192.0.2.1'})
+        self.assertEqual(response.status, 429)
+        self.assertIn('Retry-After', response.headers)
+        self.assertEqual((await self.client.get('/auth/login', allow_redirects=False, headers={'CF-Connecting-IP':'192.0.2.2'})).status, 302)
+        self.assertEqual((await self.client.post('/api/action', json={'action':'clear'}, headers=self.headers)).status, 200)
+        self.site.login_attempts['192.0.2.1'] = (time.monotonic()-LOGIN_WINDOW, LOGIN_ATTEMPTS)
+        self.site.login_attempts.move_to_end('192.0.2.1', last=False)
+        self.assertEqual((await self.client.get('/auth/login', allow_redirects=False, headers={'CF-Connecting-IP':'192.0.2.1'})).status, 302)
+
+    async def test_repeated_sign_in_reuses_browser_state_and_full_pool_does_not_refuse_everyone(self):
+        from urllib.parse import urlparse, parse_qs
+        self.site.client_id, self.site.secret = 'test-id', 'test-secret'
+        first = await self.client.get('/auth/login', allow_redirects=False)
+        state = parse_qs(urlparse(first.headers['Location']).query)['state'][0]
+        second = await self.client.get('/auth/login', allow_redirects=False, headers={'Cookie':'kirbo_oauth='+state})
+        self.assertEqual(parse_qs(urlparse(second.headers['Location']).query)['state'][0], state)
+        self.assertEqual(len(self.site.states), 1)
+        self.site.states = {str(i):time.time()+600 for i in range(MAX_PENDING_LOGINS)}
+        response = await self.client.get('/auth/login', allow_redirects=False)
+        self.assertEqual(response.status, 302)
+        self.assertEqual(len(self.site.states), MAX_PENDING_LOGINS)
+
+    def test_only_loopback_proxy_can_supply_a_cloudflare_visitor_address(self):
+        headers = {'CF-Connecting-IP':'198.51.100.1', 'X-Forwarded-For':'198.51.100.2'}
+        self.assertEqual(login_address(SimpleNamespace(remote='203.0.113.1', headers=headers)), '203.0.113.1')
+        self.assertEqual(login_address(SimpleNamespace(remote='127.0.0.1', headers=headers)), '198.51.100.1')
+        self.assertEqual(login_address(SimpleNamespace(remote='::1', headers={'CF-Connecting-IP':'invalid'})), '::1')
+        for address in ('2001:db8::1', '2001:db8::abcd'):
+            self.assertEqual(login_address(SimpleNamespace(remote='127.0.0.1', headers={'CF-Connecting-IP':address})), '2001:db8::/64')
+
+    async def test_security_headers_apply_to_the_prepared_live_stream(self):
+        events = await self.client.get('/api/events', headers=self.headers)
+        self.assertEqual(events.headers['Strict-Transport-Security'], 'max-age=15552000')
+        self.assertEqual(events.headers['Cache-Control'], 'no-store')
+        self.assertEqual(events.headers['X-Frame-Options'], 'DENY')
+        events.close()
+        self.site.secure = False
+        response = await self.client.get('/')
+        self.assertNotIn('Strict-Transport-Security', response.headers)
+
+    async def test_production_start_rejects_public_http_binding(self):
+        with patch.dict('os.environ', {'WEB_BIND':'0.0.0.0'}):
+            with self.assertRaisesRegex(ValueError, 'loopback'):
+                await start(self.music)
 
     async def test_oauth_login_binds_state_to_browser_and_creates_durable_session(self):
         from urllib.parse import urlparse, parse_qs
