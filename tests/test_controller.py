@@ -19,7 +19,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 from spotipy.exceptions import SpotifyException
 
-from music_service import MusicController, PlaybackSource, NORMALIZE_AUDIO, Store, track, validate_query
+from music_service import MusicController, PlaybackSource, NORMALIZE_AUDIO, Store, playlist_title, track, validate_query
 from web.app import (Website, cover_image, digest, MAX_COVER_BYTES, CREATOR_ID,
                      LOGIN_ATTEMPTS, LOGIN_WINDOW, MAX_PENDING_LOGINS, login_address, start)
 
@@ -165,6 +165,15 @@ class ControllerCase(unittest.IsolatedAsyncioTestCase):
 
 
 class ControllerTests(ControllerCase):
+    def test_playlist_title_removes_lyrics_suffix_but_preserves_song_name(self):
+        for suffix in (' lyrics', ' (Lyrics)', ' - LYRICS', ' [Official Lyric Video]', ' | Lyrics Video (HD)', '【lyrics】'):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(playlist_title({'title': 'Guster – Satellite' + suffix}), 'Guster - Satellite')
+        self.assertEqual(playlist_title({'artist': 'Guster', 'track': 'Satellite', 'title': 'Unrelated video title'}),
+                         'Guster - Satellite')
+        self.assertEqual(playlist_title({'title': 'Guster - Lyrics in the Middle'}), 'Guster - Lyrics in the Middle')
+        self.assertEqual(playlist_title({'title': 'Satellite (Lyrics)', 'uploader': 'Lyrics Channel'}), 'Satellite')
+
     async def test_spotify_lookup_failure_does_not_search_youtube(self):
         self.music.spotify.track = Mock(side_effect=SpotifyException(404, -1, 'Not found'))
         with patch('music_service.yt_dlp.YoutubeDL') as youtube:
@@ -321,12 +330,17 @@ class ControllerTests(ControllerCase):
         self.music.kick = Mock()
         self.music.spotify.track = Mock(return_value={'name': 'Satellite', 'artists': [{'name': 'Guster'}]})
         member = SimpleNamespace(id=12345, name='friend', voice=SimpleNamespace(channel=self.vc.channel))
-        interaction = SimpleNamespace(user=member, response=SimpleNamespace(defer=AsyncMock()),
+        interaction = SimpleNamespace(user=member, response=SimpleNamespace(send_message=AsyncMock()),
                                       edit_original_response=AsyncMock())
         play = bot.tree.get_command('play', guild=discord.Object(id=42))
         with patch('music_service.yt_dlp.YoutubeDL') as youtube:
             extract = youtube.return_value.__enter__.return_value.extract_info
             extract.return_value = {'entries': [{'webpage_url': 'https://youtu.be/4tk1He_HFjE', 'title': 'Satellite (Lyrics)'}]}
+            resolve = self.music.resolve
+            async def resolve_after_message(query):
+                interaction.response.send_message.assert_awaited_once()
+                return await resolve(query)
+            self.music.resolve = resolve_after_message
             await play.callback(interaction, 'https://open.spotify.com/track/4wOHTxl4euh0hMGU9CJERL?si=b632dd9c08a94945')
         self.music.spotify.track.assert_called_once_with('4wOHTxl4euh0hMGU9CJERL')
         extract.assert_called_once_with('ytsearch1:Satellite Guster lyrics', download=False)
@@ -654,6 +668,27 @@ class WebSecurityTests(ControllerCase):
                          ['ytsearch1:Example Song First Artist Second Artist lyrics'] * 3)
         self.assertEqual([row['query'] for row in self.music.queue], [video, video])
         self.assertEqual(self.store.playlist(playlist['id'])['tracks'][0]['query'], video)
+        self.assertEqual(self.store.playlist(playlist['id'])['tracks'][0]['title'], 'First Artist, Second Artist - Example Song')
+        self.assertEqual(self.music.queue[0]['title'], 'Example Song (Lyrics)')
+
+    async def test_playlist_text_search_uses_lyrics_and_preserves_custom_titles(self):
+        playlist = self.store.save_playlist(None, 'Mix', [])
+        data = {'action': 'playlist_song', 'id': playlist['id'], 'revision': playlist['revision'], 'query': 'Satellite Guster'}
+        video = 'https://youtu.be/4tk1He_HFjE'
+        with patch('music_service.yt_dlp.YoutubeDL') as youtube:
+            extract = youtube.return_value.__enter__.return_value.extract_info
+            extract.return_value = {'entries': [{'webpage_url': video, 'title': 'Guster - Satellite (Lyrics)'}]}
+            result = await self.client.post('/api/action', json=data, headers=self.headers)
+            self.assertEqual(result.status, 200, await result.text())
+            extract.assert_called_once_with('ytsearch1:Satellite Guster lyrics', download=False)
+            saved = self.store.playlist(playlist['id'])
+            self.assertEqual(saved['tracks'][0]['title'], 'Guster - Satellite')
+            extract.return_value = extract.return_value['entries'][0]
+            result = await self.client.post('/api/action', headers=self.headers, json=dict(
+                data, query=video, song_id=saved['tracks'][0]['id'], revision=saved['revision'], title='My custom title'))
+            self.assertEqual(result.status, 200, await result.text())
+            extract.assert_called_with(video, download=False)
+        self.assertEqual(self.store.playlist(playlist['id'])['tracks'][0]['title'], 'My custom title')
 
     async def test_expired_membership_uses_the_bot_instead_of_repeating_oauth_requests(self):
         self.expire_membership()

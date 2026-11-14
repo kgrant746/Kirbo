@@ -121,6 +121,15 @@
               class="track-list"
               aria-label="Upcoming songs"
             ></div>
+            <div id="queue-search-status" role="status">
+              <div id="queue-pending" class="track-row" hidden>
+                <span class="search-spinner" aria-hidden="true"></span>
+                <div class="track-text">
+                  <div id="queue-pending-query" class="track-title"></div>
+                  <div class="track-artist">Searching…</div>
+                </div>
+              </div>
+            </div>
             <div id="queue-empty" class="empty">
               <div class="empty-icon">♫</div>
               <h3>Nothing in the queue.</h3>
@@ -193,13 +202,22 @@
                   maxlength="500"
                   placeholder="Song name, YouTube link, or Spotify track link"
                   aria-label="Add a song by name, YouTube link, or Spotify track link"
-                /><button class="button primary">＋ Add to playlist</button>
+                /><button id="playlist-add-button" class="button primary">＋ Add to playlist</button>
               </form>
               <div class="table-head">
                 <span>#</span><span>TRACK</span><span>OPTIONS</span
                 ><span>◷</span><span></span>
               </div>
               <div id="playlist-tracks" class="track-list"></div>
+              <div role="status">
+                <div id="playlist-pending" class="track-row" hidden>
+                  <span class="search-spinner" aria-hidden="true"></span>
+                  <div class="track-text">
+                    <div id="playlist-pending-query" class="track-title"></div>
+                    <div class="track-artist">Searching…</div>
+                  </div>
+                </div>
+              </div>
               <p class="muted playlist-hint">
                 Drag to reorder · Right-click a song for more actions · Edits
                 save automatically

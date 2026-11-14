@@ -21,7 +21,10 @@ def setup_music(bot):
     async def add_song(interaction, query, next_up=False):
         if not await allowed(interaction):
             return
-        await interaction.response.defer()
+        await interaction.response.send_message(
+            f"Searching… {discord.utils.escape_markdown(query[:500])}",
+            allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True,
+        )
         try:
             row = await music.add(query, interaction.user, interaction.user.name, next_up)
             await interaction.edit_original_response(content=f"{'Will play next' if next_up else 'Added to queue'}: **{row['title']}**")

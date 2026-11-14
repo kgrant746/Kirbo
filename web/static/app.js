@@ -3,6 +3,8 @@ const $ = (id) => document.getElementById(id);
 let me,
   state,
   selected = null,
+  playlistSearch = null,
+  queueSearch = null,
   stream,
   dragging = null,
   deferredState = null,
@@ -168,7 +170,7 @@ function render() {
     ? rowHTML(state.current, 0, false, true)
     : "");
   $("now-playing").hidden = !state.current;
-  $("queue-empty").hidden = Boolean(state.queue.length || state.current);
+  $("queue-empty").hidden = Boolean(state.queue.length || state.current || queueSearch);
   const current = state.current;
   syncHTML($("player-track"), current
     ? `${image(current.thumbnail)}<div><b>${esc(current.title)}</b><small>${state.loading ? "Preparing audio…" : state.paused ? "Paused" : esc(current.artist || "Playing in Discord")}</small></div>`
@@ -434,6 +436,20 @@ document.addEventListener("keydown", (event) => {
 function playlistArt(p) {
   return image(p.cover ? `/api/playlists/${encodeURIComponent(p.id)}/cover?v=${encodeURIComponent(p.cover)}` : p.tracks[0]?.thumbnail, "playlist-cover");
 }
+function renderPendingSearch(list, query) {
+  const label = $(`${list}-pending-query`);
+  if (label.textContent !== query) {
+    label.textContent = query;
+    label.title = query;
+  }
+  $(`${list}-pending`).hidden = !query;
+}
+function renderPlaylistSearch() {
+  const query = playlistSearch?.id === selected ? playlistSearch.query : "";
+  renderPendingSearch("playlist", query);
+  $("playlist-add-button").disabled = Boolean(playlistSearch);
+  $("playlist-add-button").textContent = query ? "Searching…" : "＋ Add to playlist";
+}
 function renderLibrary() {
   $("library-empty").hidden = Boolean(state.playlists.length);
   syncHTML($("playlist-grid"), state.playlists
@@ -454,6 +470,7 @@ function renderLibrary() {
   if (!p) selected = null;
   $("library-view").hidden = Boolean(p);
   $("playlist-detail").hidden = !p;
+  renderPlaylistSearch();
   if (p) {
     $("playlist-title").textContent = p.name;
     $("playlist-meta").textContent =
@@ -634,17 +651,23 @@ $("shuffle-playlist").onclick = () =>
   action({ action: "queue_playlist", id: selected, shuffle: true })
     .then(() => toast("Playlist shuffled and added to the queue.", true))
     .catch(() => {});
-$("playlist-add").onsubmit = (event) => {
+$("playlist-add").onsubmit = async (event) => {
   event.preventDefault();
   const input = $("playlist-query"),
     p = state.playlists.find((p) => p.id === selected),
     query = input.value.trim();
-  if (!query) return;
-  action({ action: "playlist_song", id: p.id, revision: p.revision, query })
-    .then(() => {
-      input.value = "";
-    })
-    .catch(() => {});
+  if (!query || !p || playlistSearch) return;
+  playlistSearch = { id: p.id, query };
+  input.value = "";
+  renderPlaylistSearch();
+  try {
+    await action({ action: "playlist_song", id: p.id, revision: p.revision, query });
+  } catch {
+    if (selected === p.id && !input.value) input.value = query;
+  } finally {
+    playlistSearch = null;
+    renderPlaylistSearch();
+  }
 };
 $("direct-playlist").onsubmit = (event) => {
   event.preventDefault();
@@ -659,15 +682,27 @@ $("search-form").onsubmit = async (event) => {
   event.preventDefault();
   const input = $("song-query"),
     button = event.target.querySelector("button"),
-    query = input.value.trim();
-  if (!query) return;
+    query = input.value.trim(),
+    next = $("next-up").checked;
+  if (!query || queueSearch) return;
+  queueSearch = query;
+  input.value = "";
+  const status = $("queue-search-status");
+  const list = $("queue-list");
+  if (next) list.before(status);
+  else list.after(status);
+  renderPendingSearch("queue", query);
+  $("queue-empty").hidden = true;
   button.disabled = true;
   button.textContent = "Searching…";
   try {
-    await action({ action: "add", query, next: $("next-up").checked });
-    input.value = "";
+    await action({ action: "add", query, next });
   } catch {
+    if (!input.value) input.value = query;
   } finally {
+    queueSearch = null;
+    renderPendingSearch("queue", "");
+    $("queue-empty").hidden = Boolean(state.queue.length || state.current);
     button.disabled = false;
     button.textContent = "＋ Add song";
   }

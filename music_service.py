@@ -23,6 +23,11 @@ from spotipy.exceptions import SpotifyBaseException
 ROOT = Path(__file__).parent
 log = logging.getLogger(__name__)
 NORMALIZE_AUDIO = '-vn -af loudnorm=I=-16:TP=-1.5:LRA=11 -ar 48000 -b:a 96k'
+LYRICS_SUFFIX = re.compile(
+    r'[\W_]*\b(?:official[\W_]+)?(?:lyrics?(?:[\W_]+video)?|video[\W_]+lyrics?)'
+    r'(?:[\W_]+(?:hd|4k|1080p))?[\W_]*$',
+    re.IGNORECASE,
+)
 
 
 class PlaybackSource(discord.AudioSource):
@@ -84,6 +89,18 @@ def spotify_track_id(query):
 def track(query, title=None, duration=None, thumbnail=None):
     return dict(id=uuid.uuid4().hex, query=validate_query(query), title=title or query,
                 duration=duration, thumbnail=thumbnail, artist="", added_by="")
+
+
+def playlist_title(info):
+    raw_title = info.get('track') or info.get('title') or ''
+    title = LYRICS_SUFFIX.sub('', raw_title).strip() or raw_title
+    parts = re.split(r'\s+-\s+|\s*[–—]\s*', title, maxsplit=1)
+    artist = ', '.join(info.get('artists') or []) or info.get('artist')
+    if artist:
+        if len(parts) == 2 and parts[0].casefold() == artist.casefold():
+            title = parts[1]
+        return f'{artist} - {title}'
+    return ' - '.join(parts)
 
 
 class Store:
@@ -223,13 +240,17 @@ class MusicController:
             self.stopping = False
             return vc
 
-    async def resolve(self, query):
+    async def resolve(self, query, *, for_playlist=False):
         spotify_id = spotify_track_id(query)
         if not spotify_id:
             query = validate_query(query)
-            target = query if query.startswith('https://') else f'ytsearch1:{query}'
+            if query.startswith('https://'):
+                target = query
+            else:
+                search = f"{LYRICS_SUFFIX.sub('', query).strip() or query} lyrics" if for_playlist else query
+                target = f'ytsearch1:{search}'
 
-        def extract(target):
+        def extract(target, title_override):
             with yt_dlp.YoutubeDL(dict(format="bestaudio/best", noplaylist=True, quiet=True, socket_timeout=20)) as ydl:
                 info = ydl.extract_info(target, download=False)
                 info = next((x for x in info.get('entries', []) if x), None) if 'entries' in info else info
@@ -237,21 +258,26 @@ class MusicController:
                     raise ValueError("No matching YouTube video found.")
                 if info.get('is_live'):
                     raise ValueError("Live streams are not supported by the download player.")
-                row = track(info['webpage_url'], info.get('title'), info.get('duration'), info.get('thumbnail'))
+                title = info.get('title')
+                if for_playlist:
+                    title = title_override or playlist_title(info)
+                row = track(info['webpage_url'], title, info.get('duration'), info.get('thumbnail'))
                 row['artist'] = info.get('uploader') or info.get('channel') or ''
                 return row
         async with self.search_slots:
+            title_override = None
             if spotify_id:
                 try:
                     song = await asyncio.to_thread(self.spotify.track, spotify_id) or {}
                 except (SpotifyBaseException, RequestException) as error:
                     raise ValueError('Could not look up this Spotify track. Try searching by song name and artist.') from error
                 title = song.get('name')
-                artists = ' '.join(artist['name'] for artist in song.get('artists', []) if artist.get('name'))
+                artists = [artist['name'] for artist in song.get('artists', []) if artist.get('name')]
                 if not title or not artists:
                     raise ValueError('Spotify did not return a song name and artist. Try searching by song name and artist.')
-                target = f'ytsearch1:{title} {artists} lyrics'
-            return await asyncio.to_thread(extract, target)
+                target = f"ytsearch1:{title} {' '.join(artists)} lyrics"
+                title_override = f"{', '.join(artists)} - {title}"
+            return await asyncio.to_thread(extract, target, title_override)
 
     async def enrich_playlists(self):
         # Old text playlists have queries only; publish each result without blocking the UI.

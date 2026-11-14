@@ -7,7 +7,7 @@
   const initial = {instance: "preview", revision: 1, queue_revision: 1, current: song("current", "Cool For The Summer", "il9nqWw9W3Y", 233),
     queue: structuredClone(songs), playlists: [{id:"mix", name:"Team Rocket favorites", revision:1, tracks:structuredClone(songs), cover:null}],
     logs: [], loading:false, paused:false, channel:"Jubilife City", position:37};
-  let fixture = structuredClone(initial), events, rejectReorder = false;
+  let fixture = structuredClone(initial), events, rejectReorder = false, finishPlaylistSearch, finishQueueSearch;
   const response = (data, status = 200) => new Response(JSON.stringify(data), {status, headers:{"Content-Type":"application/json"}});
   window.fetch = async (path, options = {}) => {
     if (path === "/api/me") return response({id:"1", username:"Preview friend", avatar:"/static/icon.svg", creator_avatar:"/static/icon.svg", csrf:"test"});
@@ -21,6 +21,18 @@
       } else if (data.action === "queue_playlist") {
         fixture.queue.push(...songs.map((row, i) => ({...row, id:`added-${i}`})));
         fixture.queue_revision++;
+      } else if (data.action === "add") {
+        await new Promise(resolve => { finishQueueSearch = resolve; });
+        const row = song("queue-search", data.query, "EFEmTsfFL5A", 297);
+        if (data.next) fixture.queue.unshift(row);
+        else fixture.queue.push(row);
+        fixture.queue_revision++;
+      } else if (data.action === "playlist_song") {
+        const success = await new Promise(resolve => { finishPlaylistSearch = resolve; });
+        if (!success) return response({error: "No matching video"}, 400);
+        const playlist = fixture.playlists.find(p => p.id === data.id);
+        playlist.tracks.push(song("found", "Resolved title", "EFEmTsfFL5A", 297));
+        playlist.revision++;
       } else if (["pause", "resume"].includes(data.action)) fixture.paused = data.action === "pause";
       fixture.revision++;
       return response(fixture);
@@ -94,6 +106,23 @@
       fixture.revision++;
       publish();
       check([...document.querySelectorAll("#playlist-tracks img")].every((image, i) => image === playlistImages[i]), "Playlist metadata refresh replaced thumbnails");
+      const playlistForm = document.getElementById("playlist-add");
+      const input = document.getElementById("playlist-query");
+      const pending = document.getElementById("playlist-pending");
+      input.value = "Satellite Guster";
+      playlistForm.requestSubmit();
+      check(input.value === "" && !pending.hidden && pending.textContent.includes("Satellite Guster"), "Playlist search did not acknowledge submission immediately");
+      fixture.revision++; publish();
+      check(!pending.hidden, "A shared update hid the pending playlist search");
+      input.value = "Second search";
+      finishPlaylistSearch(true);
+      for (let i = 0; i < 30 && !pending.hidden; i++) await tick();
+      check(pending.hidden && input.value === "Second search", "Playlist completion wiped the next search or left the spinner visible");
+      check(document.querySelector("#playlist-tracks .track-row:last-child .track-title").textContent === "Resolved title", "Playlist search did not append the resolved song");
+      playlistForm.querySelector("button").click();
+      finishPlaylistSearch(false);
+      for (let i = 0; i < 30 && !pending.hidden; i++) await tick();
+      check(pending.hidden && input.value === "Second search", "Failed playlist search did not restore the query");
       await action({action:"queue_playlist", id:"mix"});
       tab("queue");
       check(document.querySelectorAll("#queue-list .track-row").length === 6, "Queued playlist required a refresh");
@@ -107,6 +136,17 @@
       await dragFirstAfterSecond();
       check(ids() !== original, "Successful drag did not reorder songs");
       check(numbers() === "1,2,3,4,5,6", "Successful drag left incorrect row numbers");
+      const queueInput = document.getElementById("song-query");
+      const queuePending = document.getElementById("queue-pending");
+      const queueList = document.getElementById("queue-list");
+      document.getElementById("next-up").checked = true;
+      queueInput.value = "Satellite Guster";
+      document.getElementById("search-form").requestSubmit();
+      check(queueInput.value === "" && !queuePending.hidden && queuePending.textContent.includes("Satellite Guster"), "Queue search did not acknowledge submission immediately");
+      check(queueList.previousElementSibling.contains(queuePending), "Play next search did not show at the top of the queue");
+      finishQueueSearch();
+      for (let i = 0; i < 30 && !queuePending.hidden; i++) await tick();
+      check(queuePending.hidden && queueList.firstElementChild.dataset.id === "queue-search", "Queue result did not replace the Play next loading row");
       fixture.paused = true; fixture.revision++; publish();
       check(document.querySelector(".paused-indicator") && !document.querySelector(".sound-bars"), "Paused indicator did not replace sound bars");
       const elapsed = document.getElementById("elapsed").textContent;
@@ -119,7 +159,7 @@
       check(!document.getElementById("now-playing").hidden, "Restart with a lower revision was ignored");
       check(document.querySelectorAll(".sound-bars i").length === 4, "Playing indicator should contain four bars");
       document.getElementById("toasts").replaceChildren();
-      results.textContent = "PASS: labels, centered controls, static total timer, stable thumbnails, live updates, drag rollback, pause/progress, idle cleanup, bot restart";
+      results.textContent = "PASS: labels, centered controls, static total timer, stable thumbnails, playlist and queue search feedback, live updates, drag rollback, pause/progress, idle cleanup, bot restart";
       console.log(results.textContent);
       window.scrollTo(0, 0);
     } catch (error) {

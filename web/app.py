@@ -480,7 +480,7 @@ class Website:
             playlist = music.store.playlist(data['id'])
             if not playlist:
                 raise ValueError('Playlist no longer exists.')
-            resolved = await music.resolve(data['query'])
+            resolved = await music.resolve(data['query'], for_playlist=not data.get('song_id'))
             rows = list(playlist['tracks'])
             if data.get('song_id'):
                 index = next((i for i, row in enumerate(rows) if row['id'] == data['song_id']), None)
