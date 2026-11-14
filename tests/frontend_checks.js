@@ -27,6 +27,10 @@
         if (data.next) fixture.queue.unshift(row);
         else fixture.queue.push(row);
         fixture.queue_revision++;
+      } else if (data.action === "playlist_cover") {
+        const playlist = fixture.playlists.find(p => p.id === data.id);
+        playlist.cover = playlist.tracks.find(row => row.id === data.song_id).thumbnail;
+        playlist.revision++;
       } else if (data.action === "playlist_song") {
         const success = await new Promise(resolve => { finishPlaylistSearch = resolve; });
         if (!success) return response({error: "No matching video"}, 400);
@@ -106,6 +110,15 @@
       fixture.revision++;
       publish();
       check([...document.querySelectorAll("#playlist-tracks img")].every((image, i) => image === playlistImages[i]), "Playlist metadata refresh replaced thumbnails");
+      const picker = document.getElementById("photo-picker");
+      document.getElementById("playlist-art").click();
+      check(picker.open && !document.getElementById("photo-options").hidden, "Choose photo did not offer both sources");
+      document.getElementById("pick-song-photo").click();
+      const photos = document.querySelectorAll("#song-photo-list button");
+      check(photos.length === 3 && photos[1].querySelector("img").src === songs[1].thumbnail, "Picker did not show playlist song artwork");
+      photos[1].click();
+      for (let i = 0; i < 30 && picker.open; i++) await tick();
+      check(!picker.open && document.querySelector("#playlist-art img").src === songs[1].thumbnail, "Chosen artwork did not become the cover");
       const playlistForm = document.getElementById("playlist-add");
       const input = document.getElementById("playlist-query");
       const pending = document.getElementById("playlist-pending");

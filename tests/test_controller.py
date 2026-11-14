@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import discord
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 from spotipy.exceptions import SpotifyException
@@ -165,6 +166,53 @@ class ControllerCase(unittest.IsolatedAsyncioTestCase):
 
 
 class ControllerTests(ControllerCase):
+    async def test_add_without_voice_keeps_kirbos_connection(self):
+        self.music.resolve = AsyncMock(return_value=track('song'))
+        self.music.kick = Mock()
+        self.vc.move_to = AsyncMock()
+        row = await self.music.add('song', SimpleNamespace(voice=None), 'friend')
+        self.assertEqual(self.music.queue, [row])
+        self.vc.move_to.assert_not_awaited()
+        self.music.kick.assert_called_once()
+
+    async def test_voice_fallback_uses_discord_order_and_skips_unavailable_channels(self):
+        def voice_channel(*, members=(), limit=0, connect=True):
+            channel = Mock(spec=discord.VoiceChannel, members=members, user_limit=limit,
+                           voice_states=dict(enumerate(members)), connect=AsyncMock())
+            channel.permissions_for.return_value = discord.Permissions(view_channel=True, connect=connect, speak=True)
+            return channel
+
+        human = SimpleNamespace(bot=False)
+        afk = voice_channel(members=[human])
+        denied = voice_channel(members=[human], connect=False)
+        full = voice_channel(members=[human], limit=1)
+        top = voice_channel(members=[SimpleNamespace(bot=True)])
+        occupied = voice_channel(members=[human])
+        later = voice_channel(members=[human])
+        self.guild.voice_client = None
+        self.guild.me = object()
+        self.guild.afk_channel = afk
+        self.guild.by_category = lambda: [(None, [afk, denied, full, top]), (object(), [occupied, later])]
+        disconnected_member = SimpleNamespace(voice=None)
+
+        await self.music.connect(disconnected_member)
+        occupied.connect.assert_awaited_once()
+        later.connect.assert_not_awaited()
+
+        occupied.members = later.members = []
+        await self.music.connect(disconnected_member)
+        top.connect.assert_awaited_once()
+        for channel in (afk, denied, full):
+            channel.connect.assert_not_awaited()
+
+        self.guild.by_category = lambda: [(None, [afk, denied, full])]
+        with self.assertRaisesRegex(ValueError, 'couldn’t find a voice channel'):
+            await self.music.connect(disconnected_member)
+
+        self.guild.afk_channel = None
+        await self.music.connect(disconnected_member)
+        afk.connect.assert_awaited_once()
+
     def test_playlist_title_removes_lyrics_suffix_but_preserves_song_name(self):
         for suffix in (' lyrics', ' (Lyrics)', ' - LYRICS', ' [Official Lyric Video]', ' | Lyrics Video (HD)', '【lyrics】'):
             with self.subTest(suffix=suffix):
@@ -435,6 +483,31 @@ class WebSecurityTests(ControllerCase):
         self.assertEqual(response.status, 200)
         self.assertFalse(list(self.store.covers.glob('*.png')))
         self.assertEqual((await self.client.get(path, headers=self.headers)).status, 404)
+
+    async def test_song_artwork_replaces_uploaded_cover_and_survives_playlist_edits(self):
+        url = 'https://i.ytimg.com/vi/4tk1He_HFjE/hqdefault.jpg'
+        playlist = self.store.save_playlist(None, 'Mix', [track('first'), track('second', thumbnail=url)])
+        path = f"/api/playlists/{playlist['id']}/cover"
+        response = await self.client.post(path + '?revision=1', data=self.photo(), headers=self.headers)
+        self.assertEqual(response.status, 200)
+        saved = (await response.json())['playlists'][0]
+        old_file = self.store.covers / saved['cover']
+        data = dict(action='playlist_cover', id=playlist['id'], revision=2, song_id=saved['tracks'][1]['id'])
+        for invalid in (dict(data, revision=1), dict(data, song_id='other'), dict(data, song_id=saved['tracks'][0]['id'])):
+            response = await self.client.post('/api/action', json=invalid, headers=self.headers)
+            self.assertEqual(response.status, 409, await response.text())
+        self.assertTrue(old_file.is_file())
+        response = await self.client.post('/api/action', json=data, headers=self.headers)
+        self.assertEqual(response.status, 200, await response.text())
+        saved = (await response.json())['playlists'][0]
+        self.assertEqual(saved['cover'], url)
+        self.assertFalse(old_file.exists())
+        self.assertEqual((await self.client.get(path, headers=self.headers)).status, 404)
+        edited = self.store.save_playlist(saved['id'], saved['name'], [], saved['revision'])
+        self.assertEqual(edited['cover'], url)
+        response = await self.client.post(path + '?revision=4', data=self.photo(), headers=self.headers)
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual(len(list(self.store.covers.glob('*.png'))), 1)
 
     async def test_invalid_oversized_and_stale_cover_uploads_do_not_replace_photo(self):
         p = self.store.save_playlist(None, 'Mix', [])

@@ -26,12 +26,15 @@ const duration = (n) =>
   Number.isFinite(Number(n)) && n !== null
     ? `${Math.floor(n / 60)}:${String(Math.floor(n % 60)).padStart(2, "0")}`
     : "—";
-function image(url, cls = "cover") {
+function artworkURL(url) {
   try {
     const parsed = new URL(url, location.origin);
-    if (url && (parsed.protocol === "https:" || (parsed.origin === location.origin && parsed.pathname.startsWith("/api/playlists/"))))
-      return `<img class="${cls}" src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
+    if (url && !parsed.username && !parsed.password && (parsed.protocol === "https:" || (parsed.origin === location.origin && parsed.pathname.startsWith("/api/playlists/")))) return url;
   } catch {}
+  return null;
+}
+function image(url, cls = "cover") {
+  if (artworkURL(url)) return `<img class="${cls}" src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
   return `<div class="${cls} placeholder">♫</div>`;
 }
 function toast(message, success = false) {
@@ -174,7 +177,7 @@ function render() {
   const current = state.current;
   syncHTML($("player-track"), current
     ? `${image(current.thumbnail)}<div><b>${esc(current.title)}</b><small>${state.loading ? "Preparing audio…" : state.paused ? "Paused" : esc(current.artist || "Playing in Discord")}</small></div>`
-    : '<div class="cover placeholder">♫</div><div><b>Nothing playing</b><small>Join a voice channel and add a song</small></div>');
+    : '<div class="cover placeholder">♫</div><div><b>Nothing playing</b><small>Add a song to start playing in Discord</small></div>');
   syncHTML($("pause-button"), state.paused || !current ? playIcon : pauseIcon);
   $("pause-button").setAttribute("aria-label", state.paused ? "Resume playback" : "Pause playback");
   $("pause-button").dataset.control = state.paused ? "resume" : "pause";
@@ -434,7 +437,10 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") $("context-menu").hidden = true;
 });
 function playlistArt(p) {
-  return image(p.cover ? `/api/playlists/${encodeURIComponent(p.id)}/cover?v=${encodeURIComponent(p.cover)}` : p.tracks[0]?.thumbnail, "playlist-cover");
+  const url = /^[a-f0-9]{32}\.png$/.test(p.cover)
+    ? `/api/playlists/${encodeURIComponent(p.id)}/cover?v=${encodeURIComponent(p.cover)}`
+    : p.cover || p.tracks[0]?.thumbnail;
+  return image(url, "playlist-cover");
 }
 function renderPendingSearch(list, query) {
   const label = $(`${list}-pending-query`);
@@ -479,7 +485,65 @@ function renderLibrary() {
     renderRows("playlist-tracks", p.tracks, true);
   }
 }
-$("playlist-art").onclick = () => $("playlist-photo").click();
+function showPhotoOptions() {
+  $("photo-picker-title").textContent = "Choose playlist photo";
+  $("photo-options").hidden = false;
+  $("song-photos").hidden = true;
+}
+$("playlist-art").onclick = () => {
+  showPhotoOptions();
+  $("photo-picker").showModal();
+  $("pick-song-photo").focus();
+};
+$("photo-picker-back").onclick = () => {
+  showPhotoOptions();
+  $("pick-song-photo").focus();
+};
+$("upload-playlist-photo").onclick = () => {
+  $("photo-picker").close();
+  $("playlist-photo").click();
+};
+$("pick-song-photo").onclick = () => {
+  const p = state.playlists.find((p) => p.id === selected);
+  if (!p) return;
+  $("photo-picker-title").textContent = "Choose song artwork";
+  $("photo-options").hidden = true;
+  $("song-photos").hidden = false;
+  $("song-photos-empty").hidden = Boolean(p.tracks.length);
+  $("photo-picker-status").textContent = "";
+  const list = $("song-photo-list");
+  list.innerHTML = p.tracks.map((row, i) => {
+    const url = artworkURL(row.thumbnail);
+    const available = url && /^https:\/\//i.test(url);
+    return `<button type="button" class="song-photo" data-index="${i}" ${available ? "" : "disabled"}>
+      ${image(available ? url : null)}
+      <span class="track-text"><span class="track-title">${esc(row.title)}</span>
+      <span class="track-artist">${available ? esc(row.artist) : "No artwork"}</span></span>
+    </button>`;
+  }).join("");
+  $("photo-picker-back").focus();
+  list.onclick = async (event) => {
+    const button = event.target.closest("button");
+    if (!button || button.disabled || list.inert) return;
+    list.inert = true;
+    $("playlist-art").disabled = true;
+    $("photo-picker-back").disabled = true;
+    $("photo-picker-status").textContent = "Saving photo…";
+    try {
+      await action({ action: "playlist_cover", id: p.id, revision: p.revision, song_id: p.tracks[Number(button.dataset.index)].id });
+      $("photo-picker").close();
+      toast("Playlist photo updated.", true);
+    } catch (error) {
+      $("photo-picker-status").textContent = error.message;
+    } finally {
+      list.inert = false;
+      $("playlist-art").disabled = false;
+      $("photo-picker-back").disabled = false;
+      if ($("photo-picker").open) button.focus();
+      else if (selected === p.id && activeTab === "playlists") $("playlist-art").focus();
+    }
+  };
+};
 $("playlist-photo").onchange = async (event) => {
   const file = event.target.files[0];
   event.target.value = "";

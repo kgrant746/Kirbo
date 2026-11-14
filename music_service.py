@@ -227,18 +227,38 @@ class MusicController:
             event.set()
 
     async def connect(self, member):
-        if not getattr(member, 'voice', None) or not member.voice.channel:
-            raise ValueError("Join a Team Rocket 2.0 voice channel in Discord first.")
         async with self.connect_lock:
-            vc = self.guild.voice_client
+            guild = self.guild
+            vc = guild.voice_client
+            voice = getattr(member, 'voice', None)
+            channel = voice.channel if voice else None
             if not vc:
-                vc = await member.voice.channel.connect()
-            elif vc.channel.id != member.voice.channel.id:
+                channel = channel or self.fallback_voice_channel(guild)
+                vc = await channel.connect()
+            elif channel and vc.channel.id != channel.id:
                 if vc.is_playing() or vc.is_paused() or self.loading:
                     raise ValueError("Join Kirbo’s current voice channel to control playback.")
-                await vc.move_to(member.voice.channel)
+                await vc.move_to(channel)
             self.stopping = False
             return vc
+
+    def fallback_voice_channel(self, guild):
+        first = None
+        for _, channels in guild.by_category():
+            for channel in channels:
+                if not isinstance(channel, discord.VoiceChannel) or channel == guild.afk_channel:
+                    continue
+                permissions = channel.permissions_for(guild.me)
+                if not (permissions.view_channel and permissions.connect and permissions.speak):
+                    continue
+                if channel.user_limit and len(channel.voice_states) >= channel.user_limit and not permissions.move_members:
+                    continue
+                first = first or channel
+                if any(not member.bot for member in channel.members):
+                    return channel
+        if first is None:
+            raise ValueError('Kirbo couldn’t find a voice channel it can join and speak in.')
+        return first
 
     async def resolve(self, query, *, for_playlist=False):
         spotify_id = spotify_track_id(query)

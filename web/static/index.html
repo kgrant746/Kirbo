@@ -134,7 +134,7 @@
               <div class="empty-icon">♫</div>
               <h3>Nothing in the queue.</h3>
               <p>
-                Join a Discord voice channel, then add a song above.
+                Add a song above to start playing in Discord.
               </p>
             </div>
           </section>
@@ -176,7 +176,7 @@
             <div id="playlist-detail" hidden>
               <button id="back-library" class="back">← All playlists</button>
               <div class="playlist-hero">
-                <button id="playlist-art" class="playlist-art" type="button" aria-label="Choose playlist photo" title="Choose photo (JPG, PNG or WebP, up to 5 MB)">♫</button>
+                <button id="playlist-art" class="playlist-art" type="button" aria-label="Choose playlist photo" aria-haspopup="dialog" title="Choose photo">♫</button>
                 <input id="playlist-photo" type="file" accept="image/jpeg,image/png,image/webp" hidden>
                 <div>
                   <span class="eyebrow">PLAYLIST</span>
@@ -244,7 +244,7 @@
             <div class="cover placeholder">♫</div>
             <div>
               <b>Nothing playing</b
-              ><small>Join a voice channel and add a song</small>
+              ><small>Add a song to start playing in Discord</small>
             </div>
           </div>
           <div class="player-center">
@@ -288,6 +288,22 @@
     </div>
     <div id="toasts" aria-live="polite"></div>
     <div id="context-menu" role="menu" hidden></div>
+    <dialog id="photo-picker" aria-labelledby="photo-picker-title">
+      <form class="modal-heading" method="dialog">
+        <h2 id="photo-picker-title">Choose playlist photo</h2>
+        <button class="icon-button" aria-label="Close photo picker">×</button>
+      </form>
+      <div id="photo-options" class="photo-options">
+        <button type="button" id="pick-song-photo" class="button subtle">Choose from playlist songs</button>
+        <button type="button" id="upload-playlist-photo" class="button subtle">Upload your own image</button>
+      </div>
+      <div id="song-photos" hidden>
+        <button type="button" id="photo-picker-back" class="back">← Photo options</button>
+        <p id="song-photos-empty" hidden>No songs in this playlist yet.</p>
+        <div id="song-photo-list" class="song-photo-list"></div>
+        <p id="photo-picker-status" role="status"></p>
+      </div>
+    </dialog>
     <dialog id="editor">
       <form id="editor-form">
         <div class="modal-heading">

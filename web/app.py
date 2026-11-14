@@ -12,7 +12,7 @@ import secrets
 import time
 from pathlib import Path
 from collections import OrderedDict
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import aiohttp
 import discord
@@ -27,6 +27,7 @@ COOKIE = 'kirbo_session'
 SESSION_AGE = 90 * 86400
 MEMBERSHIP_TTL = 30
 MAX_COVER_BYTES = 5 * 1024 * 1024
+UPLOADED_COVER = re.compile(r'[a-f0-9]{32}\.png')
 CREATOR_ID = 227126966287859713
 LOGIN_WINDOW = 60
 LOGIN_ATTEMPTS = 10
@@ -76,6 +77,14 @@ def remove_cover(path):
     except OSError:
         # Windows can keep an old photo open while another browser downloads it.
         logging.warning('Could not remove unused playlist photo %s', path.name)
+
+
+def track_artwork(url):
+    if isinstance(url, str):
+        parsed = urlsplit(url)
+        if parsed.scheme == 'https' and parsed.hostname and parsed.username is None:
+            return url
+    raise ValueError('That song has no artwork to use.')
 
 
 class Website:
@@ -136,7 +145,7 @@ class Website:
 
     async def get_cover(self, request):
         playlist = self.music.store.playlist(request.match_info['ident'])
-        if not playlist or not re.fullmatch(r'[a-f0-9]{32}\.png', playlist['cover'] or ''):
+        if not playlist or not UPLOADED_COVER.fullmatch(playlist['cover'] or ''):
             raise web.HTTPNotFound(reason='Playlist photo not found.')
         path = self.music.store.covers / playlist['cover']
         if not path.is_file():
@@ -166,7 +175,7 @@ class Website:
             self.db.rollback()
             remove_cover(path)
             raise
-        if latest['cover']:
+        if UPLOADED_COVER.fullmatch(latest['cover'] or ''):
             remove_cover(covers / latest['cover'])
         self.music.changed(request['session']['user']['username'], f"changed the photo for {latest['name']}")
         return web.json_response(self.music.snapshot())
@@ -493,6 +502,19 @@ class Website:
                 rows.append(resolved)
             music.store.save_playlist(playlist['id'], playlist['name'], rows, data['revision'])
             music.changed(actor, f"edited songs in {playlist['name']}")
+        elif action == 'playlist_cover':
+            playlist = music.store.playlist(data['id'])
+            if not playlist or playlist['revision'] != data.get('revision'):
+                raise ValueError('Playlist changed. Try choosing a photo again.')
+            song = next((row for row in playlist['tracks'] if row['id'] == data.get('song_id')), None)
+            if not song:
+                raise ValueError('That song is no longer in this playlist.')
+            artwork = track_artwork(song.get('thumbnail'))
+            self.db.execute('UPDATE playlists SET cover=?, revision=revision+1 WHERE id=?', (artwork, playlist['id']))
+            self.db.commit()
+            if UPLOADED_COVER.fullmatch(playlist['cover'] or ''):
+                remove_cover(music.store.covers / playlist['cover'])
+            music.changed(actor, f"changed the photo for {playlist['name']}")
         elif action == 'delete_playlist':
             playlist = music.store.playlist(data['id'])
             if not playlist:
@@ -501,7 +523,7 @@ class Website:
                 raise ValueError('Playlist changed. Refresh and try again.')
             self.db.execute('DELETE FROM playlists WHERE id=?', (playlist['id'],))
             self.db.commit()
-            if playlist['cover']:
+            if UPLOADED_COVER.fullmatch(playlist['cover'] or ''):
                 remove_cover(music.store.covers / playlist['cover'])
             music.changed(actor, f"deleted playlist {playlist['name']}")
         elif action == 'import_spotify':
