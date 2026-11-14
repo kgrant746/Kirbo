@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, urlparse
 import discord
 import spotipy
 import yt_dlp
+from requests.exceptions import RequestException
+from spotipy.exceptions import SpotifyBaseException
 
 ROOT = Path(__file__).parent
 log = logging.getLogger(__name__)
@@ -57,13 +59,26 @@ def validate_query(value):
     if "://" in value:
         parsed = urlparse(value)
         if parsed.scheme != "https" or parsed.hostname not in {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}:
-            raise ValueError("Only HTTPS YouTube links and song searches are supported.")
+            raise ValueError("Enter a song name, a direct YouTube video link, or an HTTPS Spotify track link.")
         video = parsed.path.strip('/') if parsed.hostname == 'youtu.be' else (
             parse_qs(parsed.query).get('v', [''])[0] if parsed.path == '/watch' else
             parsed.path.strip('/').split('/')[-1] if parsed.path.startswith(('/shorts/', '/live/')) else '')
         if not re.fullmatch(r'[A-Za-z0-9_-]{11}', video):
             raise ValueError('Use a direct YouTube video link, or enter a song search.')
     return value
+
+
+def spotify_track_id(query):
+    if not isinstance(query, str):
+        return None
+    query = query.strip()
+    if len(query) > 500:
+        return None
+    match = re.fullmatch(
+        r'https://open\.spotify\.com/(?:intl-[a-z]{2}/)?track/([a-z0-9]{22})/?(?:[?#][^\s]*)?',
+        query, re.IGNORECASE | re.ASCII,
+    )
+    return match[1] if match else None
 
 
 def track(query, title=None, duration=None, thumbnail=None):
@@ -170,7 +185,8 @@ class MusicController:
         self.instance = uuid.uuid4().hex
         self.connect_lock = asyncio.Lock()
         self.spotify = spotipy.Spotify(auth_manager=spotipy.SpotifyClientCredentials(
-            client_id=config.SPOTIFY_CLIENT_ID, client_secret=config.SPOTIFY_CLIENT_SECRET), requests_timeout=20)
+            client_id=config.SPOTIFY_CLIENT_ID, client_secret=config.SPOTIFY_CLIENT_SECRET,
+            requests_timeout=20), requests_timeout=20)
 
     @property
     def guild(self):
@@ -208,10 +224,14 @@ class MusicController:
             return vc
 
     async def resolve(self, query):
-        query = validate_query(query)
-        def extract():
+        spotify_id = spotify_track_id(query)
+        if not spotify_id:
+            query = validate_query(query)
+            target = query if query.startswith('https://') else f'ytsearch1:{query}'
+
+        def extract(target):
             with yt_dlp.YoutubeDL(dict(format="bestaudio/best", noplaylist=True, quiet=True, socket_timeout=20)) as ydl:
-                info = ydl.extract_info(query if query.startswith('https://') else f'ytsearch1:{query}', download=False)
+                info = ydl.extract_info(target, download=False)
                 info = next((x for x in info.get('entries', []) if x), None) if 'entries' in info else info
                 if not info:
                     raise ValueError("No matching YouTube video found.")
@@ -221,7 +241,17 @@ class MusicController:
                 row['artist'] = info.get('uploader') or info.get('channel') or ''
                 return row
         async with self.search_slots:
-            return await asyncio.to_thread(extract)
+            if spotify_id:
+                try:
+                    song = await asyncio.to_thread(self.spotify.track, spotify_id) or {}
+                except (SpotifyBaseException, RequestException) as error:
+                    raise ValueError('Could not look up this Spotify track. Try searching by song name and artist.') from error
+                title = song.get('name')
+                artists = ' '.join(artist['name'] for artist in song.get('artists', []) if artist.get('name'))
+                if not title or not artists:
+                    raise ValueError('Spotify did not return a song name and artist. Try searching by song name and artist.')
+                target = f'ytsearch1:{title} {artists} lyrics'
+            return await asyncio.to_thread(extract, target)
 
     async def enrich_playlists(self):
         # Old text playlists have queries only; publish each result without blocking the UI.

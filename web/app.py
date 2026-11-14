@@ -19,6 +19,7 @@ import discord
 from aiohttp import web
 from PIL import Image, UnidentifiedImageError
 import private
+from music_service import spotify_track_id
 
 STATIC = Path(__file__).parent / 'static'
 API = 'https://discord.com/api/v10'
@@ -510,6 +511,8 @@ class Website:
             music.store.save_playlist(None, data['name'], rows)
             self.refresh_artwork()
             music.changed(actor, f"imported playlist {data['name']}")
+        elif action == 'queue_playlist' and spotify_track_id(data.get('url')):
+            await music.add(data['url'], member, actor)
         elif action == 'queue_playlist':
             if data.get('url'):
                 rows = await music.spotify_rows(data['url'])

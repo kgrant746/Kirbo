@@ -21,7 +21,7 @@ def setup(bot: commands.Bot | discord.Bot) -> None:
                 "**Description:**\n"
                 " • Plays a song or adds it to the queue.\n"
                 "**Parameters:**\n"
-                " • `song_query` — The title or YouTube URL of the song to play.\n"
+                " • `song_query` — A song name, YouTube link, or Spotify track link.\n"
             ),
             inline=False
         )

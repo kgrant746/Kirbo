@@ -540,7 +540,7 @@ function editSong(row) {
     "Edit song",
     [
       { name: "title", label: "Title", value: row.title },
-      { name: "query", label: "YouTube link or search", value: row.query },
+      { name: "query", label: "Song name, YouTube link, or Spotify track link", value: row.query },
     ],
     async (values) => {
       const p = state.playlists.find((p) => p.id === selected);
@@ -650,7 +650,7 @@ $("direct-playlist").onsubmit = (event) => {
   event.preventDefault();
   action({ action: "queue_playlist", url: $("spotify-direct").value })
     .then(() => {
-      toast("Spotify playlist added to the queue.", true);
+      toast("Added to the queue.", true);
       $("spotify-direct").value = "";
     })
     .catch(() => {});

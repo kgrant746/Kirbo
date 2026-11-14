@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
+from spotipy.exceptions import SpotifyException
 
 from music_service import MusicController, PlaybackSource, NORMALIZE_AUDIO, Store, track, validate_query
 from web.app import (Website, cover_image, digest, MAX_COVER_BYTES, CREATOR_ID,
@@ -164,6 +165,13 @@ class ControllerCase(unittest.IsolatedAsyncioTestCase):
 
 
 class ControllerTests(ControllerCase):
+    async def test_spotify_lookup_failure_does_not_search_youtube(self):
+        self.music.spotify.track = Mock(side_effect=SpotifyException(404, -1, 'Not found'))
+        with patch('music_service.yt_dlp.YoutubeDL') as youtube:
+            with self.assertRaisesRegex(ValueError, 'Could not look up this Spotify track'):
+                await self.music.resolve('https://open.spotify.com/track/2up3OPMp9Tb4dAKM2erWXQ')
+        youtube.assert_not_called()
+
     async def test_missing_playlist_thumbnails_are_saved_and_broadcast(self):
         rows = [track('song'), track('song'), track('unavailable'), track('covered', thumbnail='https://example.com/existing.jpg')]
         p = self.store.save_playlist(None, 'Mix', rows)
@@ -310,6 +318,19 @@ class ControllerTests(ControllerCase):
         self.assertIs(module.setup_music(bot), self.music)
         names = {command.name for command in bot.tree.get_commands(guild=discord.Object(id=42))}
         self.assertEqual(names, {'play','playnext','pause','resume','stop','skip','queue','nowplaying','playlist'})
+        self.music.kick = Mock()
+        self.music.spotify.track = Mock(return_value={'name': 'Satellite', 'artists': [{'name': 'Guster'}]})
+        member = SimpleNamespace(id=12345, name='friend', voice=SimpleNamespace(channel=self.vc.channel))
+        interaction = SimpleNamespace(user=member, response=SimpleNamespace(defer=AsyncMock()),
+                                      edit_original_response=AsyncMock())
+        play = bot.tree.get_command('play', guild=discord.Object(id=42))
+        with patch('music_service.yt_dlp.YoutubeDL') as youtube:
+            extract = youtube.return_value.__enter__.return_value.extract_info
+            extract.return_value = {'entries': [{'webpage_url': 'https://youtu.be/4tk1He_HFjE', 'title': 'Satellite (Lyrics)'}]}
+            await play.callback(interaction, 'https://open.spotify.com/track/4wOHTxl4euh0hMGU9CJERL?si=b632dd9c08a94945')
+        self.music.spotify.track.assert_called_once_with('4wOHTxl4euh0hMGU9CJERL')
+        extract.assert_called_once_with('ytsearch1:Satellite Guster lyrics', download=False)
+        interaction.edit_original_response.assert_awaited_once_with(content='Added to queue: **Satellite (Lyrics)**')
         await bot.close()
 
 
@@ -604,6 +625,35 @@ class WebSecurityTests(ControllerCase):
         self.assertEqual(len(self.music.queue), 20)
         self.site.membership.assert_not_awaited()
         self.guild.fetch_member.assert_awaited_once()
+
+    async def test_spotify_track_links_work_in_all_website_song_fields(self):
+        member = SimpleNamespace(voice=SimpleNamespace(channel=self.vc.channel))
+        self.guild.get_member = lambda _: member
+        self.music.kick = Mock()
+        playlist = self.store.save_playlist(None, 'Mix', [])
+        spotify_id = '2up3OPMp9Tb4dAKM2erWXQ'
+        url = f'https://open.spotify.com/intl-de/track/{spotify_id}?si=shared'
+        self.music.spotify.track = Mock(return_value={
+            'name': 'Example Song', 'artists': [{'name': 'First Artist'}, {'name': 'Second Artist'}],
+        })
+        actions = [
+            {'action': 'add', 'query': url},
+            {'action': 'playlist_song', 'query': url, 'id': playlist['id'], 'revision': playlist['revision']},
+            {'action': 'queue_playlist', 'url': url},
+        ]
+        video = 'https://youtu.be/4tk1He_HFjE'
+        with patch('music_service.yt_dlp.YoutubeDL') as youtube:
+            extract = youtube.return_value.__enter__.return_value.extract_info
+            extract.return_value = {'entries': [{'webpage_url': video, 'title': 'Example Song (Lyrics)'}]}
+            for data in actions:
+                response = await self.client.post('/api/action', json=data, headers=self.headers)
+                self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual(self.music.spotify.track.call_count, 3)
+        self.assertTrue(all(call.args == (spotify_id,) for call in self.music.spotify.track.call_args_list))
+        self.assertEqual([call.args[0] for call in extract.call_args_list],
+                         ['ytsearch1:Example Song First Artist Second Artist lyrics'] * 3)
+        self.assertEqual([row['query'] for row in self.music.queue], [video, video])
+        self.assertEqual(self.store.playlist(playlist['id'])['tracks'][0]['query'], video)
 
     async def test_expired_membership_uses_the_bot_instead_of_repeating_oauth_requests(self):
         self.expire_membership()

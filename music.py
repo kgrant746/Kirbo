@@ -29,11 +29,12 @@ def setup_music(bot):
             await interaction.edit_original_response(content=str(error)[:1800])
 
     @bot.tree.command(name='play', description='Play a song or add it to the queue.', guilds=guilds)
-    @app_commands.describe(song_query='YouTube URL or song search')
+    @app_commands.describe(song_query='Song name, YouTube link, or Spotify track link')
     async def play(interaction: discord.Interaction, song_query: str):
         await add_song(interaction, song_query)
 
     @bot.tree.command(name='playnext', description='Insert a song at the front of the waiting queue.', guilds=guilds)
+    @app_commands.describe(song_query='Song name, YouTube link, or Spotify track link')
     async def playnext(interaction: discord.Interaction, song_query: str):
         await add_song(interaction, song_query, True)
 
