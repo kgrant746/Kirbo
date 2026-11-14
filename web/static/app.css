@@ -174,13 +174,6 @@ p {
   font-weight: 750;
   letter-spacing: -1px;
 }
-.brand span {
-  display: block;
-  font-size: 9px;
-  letter-spacing: 1.4px;
-  color: var(--muted);
-  margin-top: 3px;
-}
 .creator-credit {
   display: flex;
   align-items: center;

@@ -77,7 +77,7 @@
       publish();
       check(document.getElementById("connection").textContent === "Synced with Discord", "Connection label did not recover with the stream");
       check(document.querySelector(".creator-credit").textContent.includes("CosmicCats"), "Creator credit is missing");
-      check(document.querySelector(".brand span").textContent === "POYO POYO", "Brand tagline is incorrect");
+      check(document.querySelector(".brand").textContent.trim() === "Kirbo", "Sidebar brand should only read Kirbo");
       check(!document.querySelector(".live-badge") && !document.querySelector(".page-heading p") && !document.querySelector(".sidebar-note p"), "Removed flavor text is still present");
       check(!document.querySelector(".page-heading .eyebrow, .nav-dot, #library-view .section-heading p, #log-page .section-heading p"), "Removed labels or navigation dot are still present");
       check(document.getElementById("tab-log").textContent.trim() === "Logs", "Logs tab label is incorrect");
