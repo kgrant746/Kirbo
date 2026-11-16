@@ -115,6 +115,7 @@ class Website:
                                    handler_args={'auto_decompress': False})
         self.app.add_routes([
             web.get('/', self.index), web.get('/auth/login', self.login),
+            web.get('/login/playback', self.login_playback),
             web.get('/auth/callback', self.callback), web.get('/api/me', self.me),
             web.get('/api/state', self.state), web.get('/api/events', self.events),
             web.post('/api/logout', self.logout), web.post('/api/action', self.action),
@@ -336,6 +337,12 @@ class Website:
 
     async def index(self, request):
         return web.FileResponse(STATIC / 'index.html')
+
+    async def login_playback(self, request):
+        guild = self.music.guild
+        voice = guild.voice_client if guild else None
+        playing = bool(self.music.current and voice and voice.is_connected() and voice.is_playing())
+        return web.json_response({'playing': playing})
 
     async def login(self, request):
         if not self.client_id or not self.secret:

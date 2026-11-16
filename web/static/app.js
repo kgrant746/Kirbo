@@ -82,10 +82,126 @@ async function action(data) {
     if (--busy === 0) document.body.classList.remove("working");
   }
 }
+const loginRecord = (() => {
+  const record = $("login-record"), notes = $("record-notes");
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  const period = 14000;
+  const spin = record.animate({ transform: ["rotate(0deg)", "rotate(360deg)"] }, { duration: period, iterations: Infinity });
+  const colors = ["#f7a6d0", "#ffd48c", "#a5eadc", "#bdb2ff", "#9dd6ff"];
+  let paused = reducedMotion.matches, pointer = null, angle, shown = false, polling, pollTimer, emitter;
+
+  function updateSpin() {
+    record.setAttribute("aria-pressed", String(paused));
+    if (paused || pointer !== null || document.hidden || $("login").hidden) spin.pause();
+    else spin.play();
+  }
+  function turn(degrees) {
+    const time = (spin.currentTime ?? 0) + (degrees / 360) * period;
+    spin.currentTime = ((time % period) + period) % period;
+  }
+  function pointerAngle(event) {
+    const rect = record.getBoundingClientRect();
+    const x = event.clientX - (rect.left + rect.width / 2);
+    const y = event.clientY - (rect.top + rect.height / 2);
+    return Math.hypot(x, y) < 8 ? null : Math.atan2(y, x) * 180 / Math.PI;
+  }
+  record.onpointerdown = (event) => {
+    if (event.button !== 0 || pointer !== null) return;
+    record.setPointerCapture(event.pointerId);
+    pointer = event.pointerId;
+    angle = pointerAngle(event);
+    updateSpin();
+  };
+  record.onpointermove = (event) => {
+    if (pointer !== event.pointerId) return;
+    const next = pointerAngle(event);
+    if (next !== null && angle !== null) turn(next - angle);
+    angle = next;
+  };
+  record.onlostpointercapture = (event) => {
+    if (pointer !== event.pointerId) return;
+    pointer = null;
+    updateSpin();
+  };
+  record.onclick = (event) => {
+    if (event.detail !== 0) return;
+    paused = !paused;
+    updateSpin();
+  };
+  record.onkeydown = (event) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    turn(event.key === "ArrowLeft" ? -20 : 20);
+  };
+
+  function emitNote() {
+    const note = document.createElement("span");
+    note.className = "record-note";
+    note.textContent = Math.random() < 0.5 ? "♪" : "♫";
+    note.style.color = colors[Math.floor(Math.random() * colors.length)];
+    const direction = Math.random() * 2 * Math.PI;
+    const size = notes.clientWidth;
+    const at = (radius) => `translate(-50%, -50%) translate(${Math.cos(direction) * size * radius}px, ${Math.sin(direction) * size * radius}px)`;
+    notes.append(note);
+    note.animate([
+      { transform: at(0.25), opacity: 0 },
+      { opacity: 1, offset: 0.2 },
+      { transform: at(0.46), opacity: 0 },
+    ], 1500).onfinish = () => note.remove();
+  }
+  function showNotes(playing) {
+    if (playing && !reducedMotion.matches) {
+      if (!emitter) {
+        emitNote();
+        emitter = setInterval(emitNote, 340);
+      }
+    } else {
+      clearInterval(emitter);
+      emitter = null;
+      notes.replaceChildren();
+    }
+  }
+  async function poll(signal) {
+    let playing = false;
+    try {
+      const response = await fetch("/login/playback", { credentials: "omit", signal });
+      if (response.ok) playing = (await response.json()).playing === true;
+    } catch {}
+    if (signal.aborted) return;
+    showNotes(playing);
+    pollTimer = setTimeout(() => poll(signal), 4000);
+  }
+  function update() {
+    updateSpin();
+    if (shown && !document.hidden && !reducedMotion.matches) {
+      if (!polling) {
+        polling = new AbortController();
+        poll(polling.signal);
+      }
+    } else {
+      polling?.abort();
+      polling = null;
+      clearTimeout(pollTimer);
+      showNotes(false);
+    }
+  }
+  document.addEventListener("visibilitychange", update);
+  reducedMotion.addEventListener("change", () => {
+    paused = reducedMotion.matches;
+    update();
+  });
+  updateSpin();
+  return (visible) => {
+    shown = visible;
+    update();
+  };
+})();
+
 function signedOut(error = "") {
   stream?.close();
   $("app").hidden = true;
   $("login").hidden = false;
+  loginRecord(true);
   $("login-error").textContent = error;
 }
 function tab(name) {
@@ -795,6 +911,7 @@ async function boot() {
     };
     $("creator-avatar").src = me.creator_avatar || "/static/icon.svg";
     $("login").hidden = true;
+    loginRecord(false);
     $("app").hidden = false;
     tab(
       ["queue", "playlists", "log"].includes(localStorage.getItem("kirbo-tab"))
