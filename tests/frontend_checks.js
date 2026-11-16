@@ -9,6 +9,15 @@
     logs: [], loading:false, paused:false, channel:"Jubilife City", position:37};
   let fixture = structuredClone(initial), events, rejectReorder = false, finishPlaylistSearch, finishQueueSearch;
   const response = (data, status = 200) => new Response(JSON.stringify(data), {status, headers:{"Content-Type":"application/json"}});
+  const signedOutPreview = new URLSearchParams(location.search).has("signed-out");
+  if (signedOutPreview) {
+    window.fetch = async (path) => {
+      if (path === "/api/me") return response({error:"Sign in with Discord to continue."}, 401);
+      if (path === "/login/playback") return response({playing: location.hash !== "#idle"});
+      throw Error(`Unexpected preview request: ${path}`);
+    };
+    return;
+  }
   window.fetch = async (path, options = {}) => {
     if (path === "/api/me") return response({id:"1", username:"Preview friend", avatar:"/static/icon.svg", creator_avatar:"/static/icon.svg", csrf:"test"});
     if (path === "/api/state") return response(fixture);

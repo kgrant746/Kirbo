@@ -431,6 +431,21 @@ class WebSecurityTests(ControllerCase):
         self.assertEqual(response.status,401)
         self.assertEqual((await self.client.get('/.env')).status,404)
 
+    async def test_login_playback_exposes_only_whether_audio_is_playing(self):
+        for current, connected, playing, expected in (
+            (None, True, False, False), (track('private song'), True, True, True),
+            (track('private song'), True, False, False), (track('private song'), False, True, False),
+        ):
+            with self.subTest(connected=connected, playing=playing):
+                self.music.current = current
+                self.vc.is_connected = lambda: connected
+                self.vc.is_playing = lambda: playing
+                response = await self.client.get('/login/playback')
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                self.assertEqual(await response.json(), {'playing': expected})
+        self.site.membership.assert_not_awaited()
+
     def photo(self):
         output = io.BytesIO()
         Image.new('RGB', (900, 700), '#e89aba').save(output, format='PNG')
