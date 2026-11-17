@@ -85,19 +85,38 @@ async function action(data) {
 const loginRecord = (() => {
   const record = $("login-record"), notes = $("record-notes");
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
-  const period = 14000;
-  const spin = record.animate({ transform: ["rotate(0deg)", "rotate(360deg)"] }, { duration: period, iterations: Infinity });
+  const playbackSpeed = 360 / 14;
+  const maxFlickSpeed = 900;
   const colors = ["#f7a6d0", "#ffd48c", "#a5eadc", "#bdb2ff", "#9dd6ff"];
   let paused = reducedMotion.matches, pointer = null, angle, shown = false, polling, pollTimer, emitter;
+  let playing = false, rotation = 0, velocity = 0, frame = null;
+  let lastFrame, lastMove, dragVelocity;
 
   function updateSpin() {
     record.setAttribute("aria-pressed", String(paused));
-    if (paused || pointer !== null || document.hidden || $("login").hidden) spin.pause();
-    else spin.play();
+    if (!shown || document.hidden || pointer !== null) {
+      cancelAnimationFrame(frame);
+      frame = null;
+      velocity = 0;
+    } else if (frame === null && (velocity || (playing && !paused))) {
+      lastFrame = performance.now();
+      frame = requestAnimationFrame(coast);
+    }
+  }
+  function coast(now) {
+    const seconds = Math.max(0, Math.min((now - lastFrame) / 1000, 0.05));
+    lastFrame = now;
+    const target = playing && !paused ? playbackSpeed : 0;
+    const previous = velocity;
+    // Exponential drag keeps the slowdown consistent across refresh rates.
+    velocity = target + (velocity - target) * Math.exp(-seconds / 0.65);
+    if (Math.abs(velocity - target) < 2) velocity = target;
+    turn((previous + velocity) / 2 * seconds);
+    frame = velocity || target ? requestAnimationFrame(coast) : null;
   }
   function turn(degrees) {
-    const time = (spin.currentTime ?? 0) + (degrees / 360) * period;
-    spin.currentTime = ((time % period) + period) % period;
+    rotation = (rotation + degrees) % 360;
+    record.style.transform = `rotate(${rotation}deg)`;
   }
   function pointerAngle(event) {
     const rect = record.getBoundingClientRect();
@@ -110,13 +129,32 @@ const loginRecord = (() => {
     record.setPointerCapture(event.pointerId);
     pointer = event.pointerId;
     angle = pointerAngle(event);
+    lastMove = event.timeStamp;
+    dragVelocity = 0;
     updateSpin();
   };
   record.onpointermove = (event) => {
     if (pointer !== event.pointerId) return;
     const next = pointerAngle(event);
-    if (next !== null && angle !== null) turn(next - angle);
+    if (next !== null && angle !== null) {
+      const delta = (next - angle + 540) % 360 - 180;
+      const elapsed = Math.max(event.timeStamp - lastMove, 1);
+      const speed = Math.max(-maxFlickSpeed, Math.min(maxFlickSpeed, 1000 * delta / elapsed));
+      dragVelocity += (speed - dragVelocity) * (1 - Math.exp(-elapsed / 35));
+      turn(delta);
+    } else {
+      dragVelocity = 0;
+    }
     angle = next;
+    lastMove = event.timeStamp;
+  };
+  record.onpointerup = (event) => {
+    if (pointer !== event.pointerId) return;
+    pointer = null;
+    if (!reducedMotion.matches && event.timeStamp - lastMove < 100) {
+      velocity = dragVelocity * Math.exp(-(event.timeStamp - lastMove) / 65);
+    }
+    updateSpin();
   };
   record.onlostpointercapture = (event) => {
     if (pointer !== event.pointerId) return;
@@ -126,6 +164,7 @@ const loginRecord = (() => {
   record.onclick = (event) => {
     if (event.detail !== 0) return;
     paused = !paused;
+    if (paused) velocity = 0;
     updateSpin();
   };
   record.onkeydown = (event) => {
@@ -162,17 +201,18 @@ const loginRecord = (() => {
     }
   }
   async function poll(signal) {
-    let playing = false;
+    let active = false;
     try {
       const response = await fetch("/login/playback", { credentials: "omit", signal });
-      if (response.ok) playing = (await response.json()).playing === true;
+      if (response.ok) active = (await response.json()).playing === true;
     } catch {}
     if (signal.aborted) return;
+    playing = active;
     showNotes(playing);
+    updateSpin();
     pollTimer = setTimeout(() => poll(signal), 4000);
   }
   function update() {
-    updateSpin();
     if (shown && !document.hidden && !reducedMotion.matches) {
       if (!polling) {
         polling = new AbortController();
@@ -182,8 +222,11 @@ const loginRecord = (() => {
       polling?.abort();
       polling = null;
       clearTimeout(pollTimer);
+      playing = false;
+      velocity = 0;
       showNotes(false);
     }
+    updateSpin();
   }
   document.addEventListener("visibilitychange", update);
   reducedMotion.addEventListener("change", () => {
